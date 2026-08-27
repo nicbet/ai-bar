@@ -1,0 +1,258 @@
+import Foundation
+import SwiftUI
+
+enum PaceLevel {
+    case underPace, onPace, slightlyAhead, burningFast, unknown
+
+    var color: Color {
+        switch self {
+        case .underPace:     return .green
+        case .onPace:        return .cyan
+        case .slightlyAhead: return .yellow
+        case .burningFast:   return .red
+        case .unknown:       return .clear
+        }
+    }
+}
+
+struct ServiceUsage: Codable {
+    var utilization: Double?
+    var resetsAt: Date?
+    var windowDuration: TimeInterval?
+
+    var weeklyUtilization: Double?
+    var weeklyResetsAt: Date?
+
+    var lastError: String?
+    var lastUpdated: Date?
+
+    var percentage: Double {
+        if let u = utilization { return min(max(u, 0), 1.0) }
+        return 0
+    }
+
+    var percentInt: Int { Int(percentage * 100) }
+    var hasAPIData: Bool { utilization != nil }
+    var formattedUsage: String {
+        if let reset = resetsAt {
+            let remaining = reset.timeIntervalSinceNow
+            if remaining > 0 { return "resets in \(Self.formatDuration(remaining))" }
+            return "resetting..."
+        }
+        return hasAPIData ? "" : "not connected"
+    }
+
+    var weeklyPercentage: Double {
+        if let u = weeklyUtilization { return min(max(u, 0), 1.0) }
+        return 0
+    }
+
+    var weeklyPercentInt: Int { Int(weeklyPercentage * 100) }
+
+    var formattedWeeklyReset: String {
+        guard let reset = weeklyResetsAt else { return "" }
+        let remaining = reset.timeIntervalSinceNow
+        if remaining > 0 { return Self.formatDuration(remaining) }
+        return ""
+    }
+
+    var formattedReset: String {
+        if let reset = resetsAt {
+            let remaining = reset.timeIntervalSinceNow
+            if remaining > 0 { return Self.formatDuration(remaining) }
+            return "resetting..."
+        }
+        return ""
+    }
+
+    var elapsedFraction: Double? {
+        guard let resetsAt, let duration = windowDuration, duration > 0 else { return nil }
+        let elapsed = Date().timeIntervalSince(resetsAt.addingTimeInterval(-duration))
+        return min(max(elapsed / duration, 0), 1.0)
+    }
+
+    var paceDelta: Double? {
+        guard let elapsed = elapsedFraction else { return nil }
+        return percentage - elapsed
+    }
+
+    var paceLevel: PaceLevel {
+        guard let delta = paceDelta else { return .unknown }
+        if delta < -0.05 { return .underPace }
+        if delta < 0.05  { return .onPace }
+        if delta < 0.20  { return .slightlyAhead }
+        return .burningFast
+    }
+
+    mutating func applyAPI(_ result: UsageAPIResult) {
+        utilization = result.utilization
+        resetsAt = result.resetsAt
+        windowDuration = result.windowDuration
+        weeklyUtilization = result.weeklyUtilization
+        weeklyResetsAt = result.weeklyResetsAt
+        lastError = nil
+        lastUpdated = Date()
+    }
+
+    static func formatDuration(_ seconds: TimeInterval) -> String {
+        let total = Int(seconds)
+        let days = total / 86400
+        let hours = (total % 86400) / 3600
+        let minutes = (total % 3600) / 60
+        if days > 0 { return "\(days)d \(hours)h" }
+        if hours > 0 { return "\(hours)h \(minutes)m" }
+        return "\(minutes)m"
+    }
+
+    static let empty = ServiceUsage()
+}
+
+struct AppState: Codable {
+    var claude: ServiceUsage
+    var codex: ServiceUsage
+    var pollInterval: TimeInterval
+
+    static let defaults = AppState(claude: .empty, codex: .empty, pollInterval: 300)
+
+    init(claude: ServiceUsage, codex: ServiceUsage, pollInterval: TimeInterval) {
+        self.claude = claude; self.codex = codex; self.pollInterval = pollInterval
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        claude = (try? c.decode(ServiceUsage.self, forKey: .claude)) ?? .empty
+        codex = (try? c.decode(ServiceUsage.self, forKey: .codex)) ?? .empty
+        pollInterval = (try? c.decode(TimeInterval.self, forKey: .pollInterval)) ?? 300
+    }
+}
+
+@MainActor
+final class UsageManager: ObservableObject {
+    @Published var claude: ServiceUsage
+    @Published var codex: ServiceUsage
+    @Published var pollInterval: TimeInterval
+
+    private var timer: Timer?
+    private var pollTask: Task<Void, Never>?
+    private let stateURL: URL
+    private let api = APIClient.shared
+    private var claudeBackoff: TimeInterval = 0
+    private var codexBackoff: TimeInterval = 0
+    private var claudeNextPoll: Date = .distantPast
+    private var codexNextPoll: Date = .distantPast
+
+    init() {
+        let configDir = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".config/ai-bar")
+        try? FileManager.default.createDirectory(at: configDir, withIntermediateDirectories: true, attributes: nil)
+        stateURL = configDir.appendingPathComponent("state.json")
+
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        if let data = try? Data(contentsOf: stateURL),
+           let state = try? decoder.decode(AppState.self, from: data) {
+            claude = state.claude; codex = state.codex; pollInterval = state.pollInterval
+        } else {
+            let d = AppState.defaults
+            claude = d.claude; codex = d.codex; pollInterval = d.pollInterval
+        }
+
+        HistoryStore.shared.pruneOldEntries()
+        startPolling()
+    }
+
+    func startPolling() {
+        timer?.invalidate()
+        pollTask?.cancel()
+        pollNow()
+        timer = Timer.scheduledTimer(withTimeInterval: pollInterval, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.pollNow() }
+        }
+    }
+
+    func pollNow(force: Bool = false) {
+        pollTask?.cancel()
+        let claudeReady = force || Date() >= claudeNextPoll
+        let codexReady = force || Date() >= codexNextPoll
+        pollTask = Task.detached { [weak self] in
+            guard let self else { return }
+
+            if claudeReady {
+                do {
+                    let result = try await self.api.fetchClaudeUsage()
+                    await MainActor.run {
+                        self.claude.applyAPI(result)
+                        self.claudeBackoff = 0
+                        self.claudeNextPoll = .distantPast
+                        self.save()
+                    }
+                    HistoryStore.shared.record(service: "claude", windowType: "five_hour", result: result)
+                    if let wu = result.weeklyUtilization {
+                        HistoryStore.shared.record(
+                            service: "claude", windowType: "seven_day",
+                            utilization: wu, resetsAt: result.weeklyResetsAt, windowDuration: 604800
+                        )
+                    }
+                } catch let error as APIClient.APIError {
+                    await MainActor.run {
+                        self.claude.lastError = error.localizedDescription
+                        if case .httpError(429) = error {
+                            self.claudeBackoff = min(max(self.claudeBackoff * 2, 60), 1800)
+                            self.claudeNextPoll = Date().addingTimeInterval(self.claudeBackoff)
+                            self.claude.lastError = "Rate limited — retry in \(ServiceUsage.formatDuration(self.claudeBackoff))"
+                            logToFile("Claude: 429, backing off \(self.claudeBackoff)s")
+                        }
+                    }
+                } catch {
+                    await MainActor.run { self.claude.lastError = error.localizedDescription }
+                }
+            }
+
+            if codexReady {
+                do {
+                    let result = try await self.api.fetchCodexUsage()
+                    await MainActor.run {
+                        self.codex.applyAPI(result)
+                        self.codexBackoff = 0
+                        self.codexNextPoll = .distantPast
+                        self.save()
+                    }
+                    HistoryStore.shared.record(service: "codex", windowType: "primary", result: result)
+                    if let wu = result.weeklyUtilization {
+                        HistoryStore.shared.record(
+                            service: "codex", windowType: "secondary",
+                            utilization: wu, resetsAt: result.weeklyResetsAt, windowDuration: 604800
+                        )
+                    }
+                } catch let error as APIClient.APIError {
+                    await MainActor.run {
+                        self.codex.lastError = error.localizedDescription
+                        if case .httpError(429) = error {
+                            self.codexBackoff = min(max(self.codexBackoff * 2, 60), 1800)
+                            self.codexNextPoll = Date().addingTimeInterval(self.codexBackoff)
+                            self.codex.lastError = "Rate limited — retry in \(ServiceUsage.formatDuration(self.codexBackoff))"
+                        }
+                    }
+                } catch {
+                    await MainActor.run { self.codex.lastError = error.localizedDescription }
+                }
+            }
+        }
+    }
+
+    func retryAuth() {
+        api.retryClaudeToken()
+        claudeBackoff = 0
+        claudeNextPoll = .distantPast
+        pollNow(force: true)
+    }
+
+    private func save() {
+        let state = AppState(claude: claude, codex: codex, pollInterval: pollInterval)
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        encoder.outputFormatting = .prettyPrinted
+        guard let data = try? encoder.encode(state) else { return }
+        try? data.write(to: stateURL, options: .atomic)
+    }
+}
