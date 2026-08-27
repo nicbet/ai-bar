@@ -29,50 +29,94 @@ struct PopoverView: View {
 
     private var cards: some View {
         HStack(alignment: .top, spacing: 12) {
+            claudeCard
+            codexCard
+        }
+        .padding(.horizontal, 16)
+    }
+
+    @ViewBuilder
+    private var claudeCard: some View {
+        if manager.claudeAvailable && manager.claudeEnabled {
             ServiceCardView(
                 name: "Claude",
                 iconPath: BrandIcons.claudePath,
                 usage: manager.claude,
                 colors: (Color.claudeOrange, Color.claudeBrown)
             )
+        } else if !manager.claudeAvailable {
+            SetupCardView(
+                name: "Claude",
+                iconPath: BrandIcons.claudePath,
+                instruction: "Run claude login\nto connect",
+                color: .claudeOrange
+            )
+        }
+    }
+
+    @ViewBuilder
+    private var codexCard: some View {
+        if manager.codexAvailable && manager.codexEnabled {
             ServiceCardView(
                 name: "Codex",
                 iconPath: BrandIcons.codexPath,
                 usage: manager.codex,
                 colors: (Color.codexBlue, Color.codexBlueDark)
             )
+        } else if !manager.codexAvailable {
+            SetupCardView(
+                name: "Codex",
+                iconPath: BrandIcons.codexPath,
+                instruction: "Run codex login\nto connect",
+                color: .codexBlue
+            )
         }
-        .padding(.horizontal, 16)
     }
+
+    @Environment(\.openWindow) private var openWindow
 
     private var footer: some View {
         HStack {
-            Button {
+            FooterButton(label: "Refresh", icon: "arrow.clockwise") {
                 manager.pollNow(force: true)
-            } label: {
-                Label("Refresh", systemImage: "arrow.clockwise")
-                    .font(.system(.caption))
             }
-            .buttonStyle(.plain)
-            .foregroundStyle(.secondary)
-
             Spacer()
-
-            Button {
-                NSApplication.shared.terminate(nil)
-            } label: {
-                Label("Quit", systemImage: "xmark.circle")
-                    .font(.system(.caption))
+            FooterButton(label: "Settings", icon: "gear") {
+                NSApp.activate()
+                openWindow(id: "settings")
             }
-            .buttonStyle(.plain)
-            .foregroundStyle(.secondary)
+            Spacer()
+            FooterButton(label: "Quit", icon: "xmark.circle") {
+                NSApplication.shared.terminate(nil)
+            }
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
     }
 }
 
-#Preview {
-    PopoverView()
-        .environmentObject(UsageManager())
+private struct FooterButton: View {
+    let label: String
+    let icon: String
+    let action: () -> Void
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            Label(label, systemImage: icon)
+                .font(.system(.body))
+                .foregroundStyle(isHovered ? .primary : .secondary)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 3)
+                .background(
+                    RoundedRectangle(cornerRadius: 5)
+                        .fill(isHovered ? Color.primary.opacity(0.08) : .clear)
+                )
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering in
+            isHovered = hovering
+            if hovering { NSCursor.pointingHand.push() } else { NSCursor.pop() }
+        }
+    }
 }

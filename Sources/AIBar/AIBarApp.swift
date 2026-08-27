@@ -10,34 +10,82 @@ struct AIBarApp: App {
             PopoverView()
                 .environmentObject(manager)
         } label: {
-            let img = MenuBarRenderer.render(
-                claudePercent: manager.claude.percentInt,
-                codexPercent: manager.codex.percentInt
-            )
+            let img = MenuBarRenderer.render(providers: activeProviders)
             Image(nsImage: img)
         }
         .menuBarExtraStyle(.window)
+
+        WindowGroup(id: "service-detail", for: String.self) { $serviceName in
+            if let serviceName {
+                DetailView(serviceName: serviceName)
+                    .environmentObject(manager)
+            }
+        }
+        .defaultSize(width: 520, height: 640)
+        .windowResizability(.contentMinSize)
+
+        Window("Settings", id: "settings") {
+            SettingsView()
+                .environmentObject(manager)
+        }
+        .defaultSize(width: 340, height: 300)
+        .windowResizability(.contentSize)
+    }
+
+    private var activeProviders: [ProviderLabel] {
+        var providers: [ProviderLabel] = []
+        if manager.claudeEnabled && manager.claudeAvailable {
+            providers.append(ProviderLabel(
+                iconPath: BrandIcons.claudePath,
+                percent: manager.claude.percentInt
+            ))
+        }
+        if manager.codexEnabled && manager.codexAvailable {
+            providers.append(ProviderLabel(
+                iconPath: BrandIcons.codexPath,
+                percent: manager.codex.percentInt
+            ))
+        }
+        return providers
     }
 }
 
+struct ProviderLabel {
+    let iconPath: String
+    let percent: Int
+}
+
 enum MenuBarRenderer {
-    static func render(claudePercent: Int, codexPercent: Int) -> NSImage {
+    static func render(providers: [ProviderLabel]) -> NSImage {
         let height: CGFloat = 18
         let iconSize: CGFloat = 14
         let spacing: CGFloat = 3
         let gap: CGFloat = 6
         let font = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .medium)
 
-        let claudeText = "\(claudePercent)%"
-        let codexText = "\(codexPercent)%"
+        if providers.isEmpty {
+            let fallback = NSImage(size: NSSize(width: 18, height: height))
+            fallback.lockFocus()
+            let attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: NSColor.labelColor]
+            ("AI" as NSString).draw(at: NSPoint(x: 0, y: (height - font.capHeight) / 2), withAttributes: attrs)
+            fallback.unlockFocus()
+            fallback.isTemplate = true
+            return fallback
+        }
 
         let attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: NSColor.black]
-        let claudeTextSize = (claudeText as NSString).size(withAttributes: attrs)
-        let codexTextSize = (codexText as NSString).size(withAttributes: attrs)
+        var totalWidth: CGFloat = 0
+        var segments: [(textSize: NSSize, text: String)] = []
 
-        let totalWidth = iconSize + spacing + claudeTextSize.width + gap + iconSize + spacing + codexTextSize.width
+        for (i, p) in providers.enumerated() {
+            let text = "\(p.percent)%"
+            let size = (text as NSString).size(withAttributes: attrs)
+            segments.append((size, text))
+            totalWidth += iconSize + spacing + size.width
+            if i < providers.count - 1 { totalWidth += gap }
+        }
+
         let image = NSImage(size: NSSize(width: ceil(totalWidth), height: height))
-
         image.lockFocus()
         guard let ctx = NSGraphicsContext.current?.cgContext else {
             image.unlockFocus()
@@ -45,21 +93,16 @@ enum MenuBarRenderer {
         }
 
         var x: CGFloat = 0
-        let iconY = (height - iconSize) / 2
-        let textY = (height - claudeTextSize.height) / 2
+        let textY = (height - segments[0].textSize.height) / 2
 
-        BrandIcons.drawInContext(ctx, path: BrandIcons.claudePath,
-                                in: CGRect(x: x, y: iconY, width: iconSize, height: iconSize))
-        x += iconSize + spacing
+        for (i, p) in providers.enumerated() {
+            let iconRect = CGRect(x: x, y: (height - iconSize) / 2, width: iconSize, height: iconSize)
+            BrandIcons.drawInContext(ctx, path: p.iconPath, in: iconRect)
+            x += iconSize + spacing
 
-        (claudeText as NSString).draw(at: NSPoint(x: x, y: textY), withAttributes: attrs)
-        x += claudeTextSize.width + gap
-
-        BrandIcons.drawInContext(ctx, path: BrandIcons.codexPath,
-                                in: CGRect(x: x, y: iconY, width: iconSize, height: iconSize))
-        x += iconSize + spacing
-
-        (codexText as NSString).draw(at: NSPoint(x: x, y: textY), withAttributes: attrs)
+            (segments[i].text as NSString).draw(at: NSPoint(x: x, y: textY), withAttributes: attrs)
+            x += segments[i].textSize.width + gap
+        }
 
         image.unlockFocus()
         image.isTemplate = true

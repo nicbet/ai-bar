@@ -3,6 +3,12 @@ import SQLite3
 
 private let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
 
+struct UsageSnapshot: Identifiable {
+    let id = UUID()
+    let timestamp: Date
+    let utilization: Double
+}
+
 final class HistoryStore: @unchecked Sendable {
     static let shared = HistoryStore()
 
@@ -83,6 +89,32 @@ final class HistoryStore: @unchecked Sendable {
         record(service: service, windowType: windowType,
                utilization: result.utilization, resetsAt: result.resetsAt,
                windowDuration: result.windowDuration)
+    }
+
+    func snapshots(service: String, windowType: String, since: Date) -> [UsageSnapshot] {
+        guard let db else { return [] }
+
+        let sql = "SELECT timestamp, utilization FROM usage_snapshots WHERE service = ? AND window_type = ? AND timestamp >= ? ORDER BY timestamp ASC;"
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
+        defer { sqlite3_finalize(stmt) }
+
+        let sinceStr = ISO8601DateFormatter().string(from: since)
+        sqlite3_bind_text(stmt, 1, service, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_text(stmt, 2, windowType, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_text(stmt, 3, sinceStr, -1, SQLITE_TRANSIENT)
+
+        let fmt = ISO8601DateFormatter()
+        fmt.formatOptions = [.withInternetDateTime]
+        var results: [UsageSnapshot] = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            guard let tsRaw = sqlite3_column_text(stmt, 0) else { continue }
+            let tsStr = String(cString: tsRaw)
+            guard let date = fmt.date(from: tsStr) else { continue }
+            let util = sqlite3_column_double(stmt, 1)
+            results.append(UsageSnapshot(timestamp: date, utilization: util))
+        }
+        return results
     }
 
     func pruneOldEntries(olderThanDays days: Int = 90) {

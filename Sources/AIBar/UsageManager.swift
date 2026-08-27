@@ -33,6 +33,7 @@ struct ServiceUsage: Codable {
 
     var percentInt: Int { Int(percentage * 100) }
     var hasAPIData: Bool { utilization != nil }
+
     var formattedUsage: String {
         if let reset = resetsAt {
             let remaining = reset.timeIntervalSinceNow
@@ -111,11 +112,18 @@ struct AppState: Codable {
     var claude: ServiceUsage
     var codex: ServiceUsage
     var pollInterval: TimeInterval
+    var claudeEnabled: Bool
+    var codexEnabled: Bool
 
-    static let defaults = AppState(claude: .empty, codex: .empty, pollInterval: 300)
+    static let defaults = AppState(
+        claude: .empty, codex: .empty, pollInterval: 300,
+        claudeEnabled: true, codexEnabled: true
+    )
 
-    init(claude: ServiceUsage, codex: ServiceUsage, pollInterval: TimeInterval) {
+    init(claude: ServiceUsage, codex: ServiceUsage, pollInterval: TimeInterval,
+         claudeEnabled: Bool, codexEnabled: Bool) {
         self.claude = claude; self.codex = codex; self.pollInterval = pollInterval
+        self.claudeEnabled = claudeEnabled; self.codexEnabled = codexEnabled
     }
 
     init(from decoder: Decoder) throws {
@@ -123,6 +131,8 @@ struct AppState: Codable {
         claude = (try? c.decode(ServiceUsage.self, forKey: .claude)) ?? .empty
         codex = (try? c.decode(ServiceUsage.self, forKey: .codex)) ?? .empty
         pollInterval = (try? c.decode(TimeInterval.self, forKey: .pollInterval)) ?? 300
+        claudeEnabled = (try? c.decode(Bool.self, forKey: .claudeEnabled)) ?? true
+        codexEnabled = (try? c.decode(Bool.self, forKey: .codexEnabled)) ?? true
     }
 }
 
@@ -131,6 +141,10 @@ final class UsageManager: ObservableObject {
     @Published var claude: ServiceUsage
     @Published var codex: ServiceUsage
     @Published var pollInterval: TimeInterval
+    @Published var claudeEnabled: Bool
+    @Published var codexEnabled: Bool
+    @Published var claudeAvailable: Bool = false
+    @Published var codexAvailable: Bool = false
 
     private var timer: Timer?
     private var pollTask: Task<Void, Never>?
@@ -152,13 +166,21 @@ final class UsageManager: ObservableObject {
         if let data = try? Data(contentsOf: stateURL),
            let state = try? decoder.decode(AppState.self, from: data) {
             claude = state.claude; codex = state.codex; pollInterval = state.pollInterval
+            claudeEnabled = state.claudeEnabled; codexEnabled = state.codexEnabled
         } else {
             let d = AppState.defaults
             claude = d.claude; codex = d.codex; pollInterval = d.pollInterval
+            claudeEnabled = d.claudeEnabled; codexEnabled = d.codexEnabled
         }
 
+        checkCredentials()
         HistoryStore.shared.pruneOldEntries()
         startPolling()
+    }
+
+    func checkCredentials() {
+        claudeAvailable = APIClient.claudeCredentialsExist()
+        codexAvailable = APIClient.codexCredentialsExist()
     }
 
     func startPolling() {
@@ -172,12 +194,14 @@ final class UsageManager: ObservableObject {
 
     func pollNow(force: Bool = false) {
         pollTask?.cancel()
-        let claudeReady = force || Date() >= claudeNextPoll
-        let codexReady = force || Date() >= codexNextPoll
+        checkCredentials()
+        let shouldClaude = claudeEnabled && claudeAvailable && (force || Date() >= claudeNextPoll)
+        let shouldCodex = codexEnabled && codexAvailable && (force || Date() >= codexNextPoll)
+
         pollTask = Task.detached { [weak self] in
             guard let self else { return }
 
-            if claudeReady {
+            if shouldClaude {
                 do {
                     let result = try await self.api.fetchClaudeUsage()
                     await MainActor.run {
@@ -208,7 +232,7 @@ final class UsageManager: ObservableObject {
                 }
             }
 
-            if codexReady {
+            if shouldCodex {
                 do {
                     let result = try await self.api.fetchCodexUsage()
                     await MainActor.run {
@@ -247,8 +271,27 @@ final class UsageManager: ObservableObject {
         pollNow(force: true)
     }
 
+    func updatePollInterval(_ interval: TimeInterval) {
+        pollInterval = interval
+        save()
+        startPolling()
+    }
+
+    func setProviderEnabled(_ provider: String, enabled: Bool) {
+        switch provider {
+        case "claude": claudeEnabled = enabled
+        case "codex": codexEnabled = enabled
+        default: break
+        }
+        save()
+        if enabled { pollNow(force: true) }
+    }
+
     private func save() {
-        let state = AppState(claude: claude, codex: codex, pollInterval: pollInterval)
+        let state = AppState(
+            claude: claude, codex: codex, pollInterval: pollInterval,
+            claudeEnabled: claudeEnabled, codexEnabled: codexEnabled
+        )
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = .prettyPrinted
