@@ -6,22 +6,31 @@ A macOS menu bar app that tracks Claude and Codex (ChatGPT) token usage in real 
 ![Swift 5.9](https://img.shields.io/badge/Swift-5.9-orange)
 ![License: MIT](https://img.shields.io/badge/License-MIT-green)
 
+![AI Bar screenshot](docs/screenshot.webp)
+
 ## Features
 
 - **Ring progress bars** showing 5-hour session usage for both Claude and Codex
 - **Pacing indicator** — a tick mark on each ring showing where usage *should* be for even consumption across the window
 - **Weekly limits** — horizontal progress bar below each ring showing 7-day utilization
+- **Auto-detection** — discovers which providers are installed, shows setup instructions for missing ones
+- **Settings window** — enable/disable providers, adjust refresh interval (1m–15m)
+- **Detail view** — click a ring to open a window with usage history charts (24h/7d/30d)
 - **Live data** — polls the Anthropic and OpenAI OAuth APIs every 5 minutes (no manual input needed)
 - **Usage history** — SQLite database recording every poll for trend analysis
 - **Exponential backoff** on rate limits (429s)
-- **No open ports** — reads credentials locally, no HTTP server
+- **No open ports** — reads credentials locally, no network listeners
 
 ## Prerequisites
 
 - macOS 14.0+
 - Xcode Command Line Tools (`xcode-select --install`)
-- [Claude Code](https://claude.ai/code) logged in (`claude` CLI authenticated)
-- [Codex](https://chatgpt.com) logged in (`codex login` completed)
+
+At least one of:
+- [Claude Code](https://claude.ai/code) logged in (`claude login`)
+- [Codex](https://chatgpt.com) logged in (`codex login`)
+
+The app auto-detects which providers are available and only shows those.
 
 ## Build & Install
 
@@ -58,9 +67,9 @@ The tick mark on each ring shows where you'd be if you consumed your budget even
 
 On first launch, macOS may prompt you to allow AI Bar to read the Claude Code keychain entry. Click **"Always Allow"** to avoid repeated prompts.
 
-## Menu Bar
+## Usage
 
-The menu bar shows both service icons with their current usage percentages. Click to open the popover with full ring displays, pacing indicators, and weekly limits.
+The menu bar shows icons and percentages for each active provider. Click to open the popover with ring displays, pacing indicators, and weekly limits. Click a ring to open a detail window with usage history charts.
 
 ## License
 
