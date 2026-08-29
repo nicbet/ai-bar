@@ -13,6 +13,7 @@ bundle: build
 	mkdir -p "$(BUNDLE)/Contents/Resources"
 	cp "$(BUILD_DIR)/AIBar" "$(BUNDLE)/Contents/MacOS/AIBar"
 	cp Resources/Info.plist "$(BUNDLE)/Contents/"
+	cp Resources/AppIcon.icns "$(BUNDLE)/Contents/Resources/"
 	codesign --force --sign - "$(BUNDLE)"
 	@echo "Built $(BUNDLE)"
 

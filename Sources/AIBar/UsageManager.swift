@@ -40,7 +40,7 @@ struct ServiceUsage: Codable {
             if remaining > 0 { return "resets in \(Self.formatDuration(remaining))" }
             return "resetting..."
         }
-        return hasAPIData ? "" : "not connected"
+        return hasAPIData ? "reset inactive" : "not connected"
     }
 
     var weeklyPercentage: Double {
