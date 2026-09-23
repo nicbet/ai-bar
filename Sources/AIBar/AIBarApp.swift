@@ -10,7 +10,9 @@ struct AIBarApp: App {
             PopoverView()
                 .environmentObject(manager)
         } label: {
-            let img = MenuBarRenderer.render(providers: activeProviders)
+            let costText = manager.showEstimatedCost && manager.dailyCost.totalCost > 0
+                ? String(format: "%.2f", manager.dailyCost.totalCost) : nil
+            let img = MenuBarRenderer.render(providers: activeProviders, costLabel: costText)
             Image(nsImage: img)
         }
         .menuBarExtraStyle(.window)
@@ -56,14 +58,14 @@ struct ProviderLabel {
 }
 
 enum MenuBarRenderer {
-    static func render(providers: [ProviderLabel]) -> NSImage {
+    static func render(providers: [ProviderLabel], costLabel: String? = nil) -> NSImage {
         let height: CGFloat = 18
         let iconSize: CGFloat = 14
         let spacing: CGFloat = 3
         let gap: CGFloat = 6
         let font = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .medium)
 
-        if providers.isEmpty {
+        if providers.isEmpty && costLabel == nil {
             let fallback = NSImage(size: NSSize(width: 18, height: height))
             fallback.lockFocus()
             let attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: NSColor.labelColor]
@@ -85,6 +87,13 @@ enum MenuBarRenderer {
             if i < providers.count - 1 { totalWidth += gap }
         }
 
+        var costSize = NSSize.zero
+        if let costLabel {
+            costSize = (costLabel as NSString).size(withAttributes: attrs)
+            if !providers.isEmpty { totalWidth += gap }
+            totalWidth += iconSize + spacing + costSize.width
+        }
+
         let image = NSImage(size: NSSize(width: ceil(totalWidth), height: height))
         image.lockFocus()
         guard let ctx = NSGraphicsContext.current?.cgContext else {
@@ -93,7 +102,8 @@ enum MenuBarRenderer {
         }
 
         var x: CGFloat = 0
-        let textY = (height - segments[0].textSize.height) / 2
+        let firstTextHeight = segments.first?.textSize.height ?? costSize.height
+        let textY = (height - firstTextHeight) / 2
 
         for (i, p) in providers.enumerated() {
             let iconRect = CGRect(x: x, y: (height - iconSize) / 2, width: iconSize, height: iconSize)
@@ -102,6 +112,14 @@ enum MenuBarRenderer {
 
             (segments[i].text as NSString).draw(at: NSPoint(x: x, y: textY), withAttributes: attrs)
             x += segments[i].textSize.width + gap
+        }
+
+        if let costLabel {
+            let dollarRect = CGRect(x: x, y: (height - iconSize) / 2, width: iconSize, height: iconSize)
+            BrandIcons.drawInContext(ctx, path: BrandIcons.dollarPath, in: dollarRect)
+            x += iconSize + spacing
+
+            (costLabel as NSString).draw(at: NSPoint(x: x, y: textY), withAttributes: attrs)
         }
 
         image.unlockFocus()

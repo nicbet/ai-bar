@@ -114,16 +114,18 @@ struct AppState: Codable {
     var pollInterval: TimeInterval
     var claudeEnabled: Bool
     var codexEnabled: Bool
+    var showEstimatedCost: Bool
 
     static let defaults = AppState(
         claude: .empty, codex: .empty, pollInterval: 300,
-        claudeEnabled: true, codexEnabled: true
+        claudeEnabled: true, codexEnabled: true, showEstimatedCost: false
     )
 
     init(claude: ServiceUsage, codex: ServiceUsage, pollInterval: TimeInterval,
-         claudeEnabled: Bool, codexEnabled: Bool) {
+         claudeEnabled: Bool, codexEnabled: Bool, showEstimatedCost: Bool) {
         self.claude = claude; self.codex = codex; self.pollInterval = pollInterval
         self.claudeEnabled = claudeEnabled; self.codexEnabled = codexEnabled
+        self.showEstimatedCost = showEstimatedCost
     }
 
     init(from decoder: Decoder) throws {
@@ -133,6 +135,7 @@ struct AppState: Codable {
         pollInterval = (try? c.decode(TimeInterval.self, forKey: .pollInterval)) ?? 300
         claudeEnabled = (try? c.decode(Bool.self, forKey: .claudeEnabled)) ?? true
         codexEnabled = (try? c.decode(Bool.self, forKey: .codexEnabled)) ?? true
+        showEstimatedCost = (try? c.decode(Bool.self, forKey: .showEstimatedCost)) ?? false
     }
 }
 
@@ -145,6 +148,8 @@ final class UsageManager: ObservableObject {
     @Published var codexEnabled: Bool
     @Published var claudeAvailable: Bool = false
     @Published var codexAvailable: Bool = false
+    @Published var showEstimatedCost: Bool
+    @Published var dailyCost: DailyCostSummary = .empty
 
     private var timer: Timer?
     private var pollTask: Task<Void, Never>?
@@ -167,14 +172,17 @@ final class UsageManager: ObservableObject {
            let state = try? decoder.decode(AppState.self, from: data) {
             claude = state.claude; codex = state.codex; pollInterval = state.pollInterval
             claudeEnabled = state.claudeEnabled; codexEnabled = state.codexEnabled
+            showEstimatedCost = state.showEstimatedCost
         } else {
             let d = AppState.defaults
             claude = d.claude; codex = d.codex; pollInterval = d.pollInterval
             claudeEnabled = d.claudeEnabled; codexEnabled = d.codexEnabled
+            showEstimatedCost = d.showEstimatedCost
         }
 
         checkCredentials()
         HistoryStore.shared.pruneOldEntries()
+        refreshCost()
         startPolling()
     }
 
@@ -261,6 +269,11 @@ final class UsageManager: ObservableObject {
                     await MainActor.run { self.codex.lastError = error.localizedDescription }
                 }
             }
+
+            if await self.showEstimatedCost {
+                let cost = CostEstimator.shared.scanToday()
+                await MainActor.run { self.dailyCost = cost }
+            }
         }
     }
 
@@ -287,10 +300,25 @@ final class UsageManager: ObservableObject {
         if enabled { pollNow(force: true) }
     }
 
+    func setShowEstimatedCost(_ show: Bool) {
+        showEstimatedCost = show
+        save()
+        if show { refreshCost() }
+    }
+
+    func refreshCost() {
+        guard showEstimatedCost else { return }
+        Task.detached {
+            let cost = CostEstimator.shared.scanToday()
+            await MainActor.run { self.dailyCost = cost }
+        }
+    }
+
     private func save() {
         let state = AppState(
             claude: claude, codex: codex, pollInterval: pollInterval,
-            claudeEnabled: claudeEnabled, codexEnabled: codexEnabled
+            claudeEnabled: claudeEnabled, codexEnabled: codexEnabled,
+            showEstimatedCost: showEstimatedCost
         )
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601

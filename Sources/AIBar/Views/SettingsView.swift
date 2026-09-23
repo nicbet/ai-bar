@@ -51,6 +51,19 @@ struct SettingsView: View {
                 .padding(4)
             }
 
+            GroupBox("Display") {
+                VStack(alignment: .leading, spacing: 4) {
+                    Toggle("Show Estimated API Cost", isOn: Binding(
+                        get: { manager.showEstimatedCost },
+                        set: { manager.setShowEstimatedCost($0) }
+                    ))
+                    Text("Based on published API prices, scanned from local transcripts")
+                        .font(.system(.caption2))
+                        .foregroundStyle(.tertiary)
+                }
+                .padding(4)
+            }
+
             HStack {
                 Spacer()
                 Button("Check Credentials") {

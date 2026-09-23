@@ -8,6 +8,10 @@ struct PopoverView: View {
             header
             Divider().padding(.horizontal)
             cards.padding(.vertical, 16)
+            if manager.showEstimatedCost {
+                Divider().padding(.horizontal)
+                costRow
+            }
             Divider().padding(.horizontal)
             footer
         }
@@ -71,6 +75,40 @@ struct PopoverView: View {
                 color: .codexBlue
             )
         }
+    }
+
+    private var costRow: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "dollarsign.circle")
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+
+            Text("Est. API cost today")
+                .font(.system(.caption, design: .rounded))
+                .foregroundStyle(.secondary)
+
+            Spacer()
+
+            let cost = manager.dailyCost
+            if cost.totalCost > 0 {
+                HStack(spacing: 8) {
+                    if cost.claudeCost > 0 && cost.codexCost > 0 {
+                        Text("\(formatCost(cost.claudeCost)) + \(formatCost(cost.codexCost))")
+                            .font(.system(.caption2, design: .monospaced))
+                            .foregroundStyle(.tertiary)
+                    }
+                    Text("≈ \(formatCost(cost.totalCost))")
+                        .font(.system(.body, design: .rounded))
+                        .fontWeight(.semibold)
+                }
+            } else {
+                Text("—")
+                    .font(.system(.body, design: .rounded))
+                    .foregroundStyle(.tertiary)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
     }
 
     @Environment(\.openWindow) private var openWindow

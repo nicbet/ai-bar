@@ -54,6 +54,10 @@ struct DetailView: View {
                 if !weeklyData.isEmpty {
                     chartSection(title: "Weekly Usage", data: weeklyData, color: brandColors.1)
                 }
+
+                if manager.showEstimatedCost {
+                    costBreakdownSection
+                }
             }
             .padding(24)
         }
@@ -196,6 +200,66 @@ struct DetailView: View {
                     }
                 }
                 .frame(height: 180)
+            }
+        }
+        .padding(16)
+        .background(RoundedRectangle(cornerRadius: 10).fill(.quaternary.opacity(0.3)))
+    }
+
+    @ViewBuilder
+    private var costBreakdownSection: some View {
+        let models = serviceName == "claude" ? manager.dailyCost.claudeModels : manager.dailyCost.codexModels
+        let serviceCost = serviceName == "claude" ? manager.dailyCost.claudeCost : manager.dailyCost.codexCost
+
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Estimated API Cost (Today)")
+                .font(.system(size: 13, weight: .semibold, design: .rounded))
+                .foregroundStyle(.secondary)
+
+            if models.isEmpty {
+                HStack {
+                    Spacer()
+                    VStack(spacing: 8) {
+                        Image(systemName: "dollarsign.circle")
+                            .font(.system(size: 28))
+                            .foregroundStyle(.quaternary)
+                        Text("No usage today")
+                            .font(.system(.caption))
+                            .foregroundStyle(.tertiary)
+                    }
+                    .padding(.vertical, 20)
+                    Spacer()
+                }
+            } else {
+                ForEach(models) { entry in
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(entry.model)
+                                .font(.system(.caption, design: .monospaced))
+                            Text("\(formatTokenCount(entry.inputTokens)) in · \(formatTokenCount(entry.outputTokens)) out")
+                                .font(.system(.caption2, design: .monospaced))
+                                .foregroundStyle(.tertiary)
+                        }
+                        Spacer()
+                        Text(formatCost(entry.cost))
+                            .font(.system(.body, design: .rounded))
+                            .fontWeight(.medium)
+                            .foregroundStyle(brandColors.0)
+                    }
+                }
+
+                Divider()
+
+                HStack {
+                    Text("Total")
+                        .font(.system(.caption, design: .rounded))
+                        .fontWeight(.semibold)
+                    Spacer()
+                    Text("≈ \(formatCost(serviceCost))")
+                        .font(.system(.body, design: .rounded))
+                        .fontWeight(.bold)
+                        .foregroundStyle(brandColors.0)
+                }
             }
         }
         .padding(16)
