@@ -26,6 +26,13 @@ struct AIBarApp: App {
         .defaultSize(width: 520, height: 640)
         .windowResizability(.contentMinSize)
 
+        Window("API Spending", id: "spending") {
+            SpendingView()
+                .environmentObject(manager)
+        }
+        .defaultSize(width: 520, height: 820)
+        .windowResizability(.contentMinSize)
+
         Window("Settings", id: "settings") {
             SettingsView()
                 .environmentObject(manager)

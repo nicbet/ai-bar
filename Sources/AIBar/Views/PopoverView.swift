@@ -78,37 +78,10 @@ struct PopoverView: View {
     }
 
     private var costRow: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "dollarsign.circle")
-                .font(.system(size: 12))
-                .foregroundStyle(.secondary)
-
-            Text("Est. API cost today")
-                .font(.system(.caption, design: .rounded))
-                .foregroundStyle(.secondary)
-
-            Spacer()
-
-            let cost = manager.dailyCost
-            if cost.totalCost > 0 {
-                HStack(spacing: 8) {
-                    if cost.claudeCost > 0 && cost.codexCost > 0 {
-                        Text("\(formatCost(cost.claudeCost)) + \(formatCost(cost.codexCost))")
-                            .font(.system(.caption2, design: .monospaced))
-                            .foregroundStyle(.tertiary)
-                    }
-                    Text("≈ \(formatCost(cost.totalCost))")
-                        .font(.system(.body, design: .rounded))
-                        .fontWeight(.semibold)
-                }
-            } else {
-                Text("—")
-                    .font(.system(.body, design: .rounded))
-                    .foregroundStyle(.tertiary)
-            }
+        CostRowButton(cost: manager.dailyCost) {
+            NSApp.activate()
+            openWindow(id: "spending")
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
     }
 
     @Environment(\.openWindow) private var openWindow
@@ -130,6 +103,64 @@ struct PopoverView: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
+    }
+}
+
+private struct CostRowButton: View {
+    let cost: DailyCostSummary
+    let action: () -> Void
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                Image(systemName: "dollarsign.circle")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+
+                Text("Est. API cost today")
+                    .font(.system(.caption, design: .rounded))
+                    .foregroundStyle(.secondary)
+
+                Spacer()
+
+                if cost.totalCost > 0 {
+                    HStack(spacing: 8) {
+                        if cost.claudeCost > 0 && cost.codexCost > 0 {
+                            Text("\(formatCost(cost.claudeCost)) + \(formatCost(cost.codexCost))")
+                                .font(.system(.caption2, design: .monospaced))
+                                .foregroundStyle(.tertiary)
+                        }
+                        Text("≈ \(formatCost(cost.totalCost))")
+                            .font(.system(.body, design: .rounded))
+                            .fontWeight(.semibold)
+                    }
+                } else {
+                    Text("—")
+                        .font(.system(.body, design: .rounded))
+                        .foregroundStyle(.tertiary)
+                }
+
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(isHovered ? .secondary : .tertiary)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(isHovered ? Color.primary.opacity(0.06) : .clear)
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .help("Show receipt and daily history")
+        .onHover { hovering in
+            isHovered = hovering
+            if hovering { NSCursor.pointingHand.push() } else { NSCursor.pop() }
+        }
     }
 }
 
