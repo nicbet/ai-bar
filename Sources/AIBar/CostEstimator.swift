@@ -50,9 +50,15 @@ struct ModelPricing {
 struct ModelCostEntry: Identifiable {
     let id = UUID()
     let model: String
+    /// Uncached input tokens
     let inputTokens: Int
     let outputTokens: Int
+    let cacheWriteTokens: Int
+    let cacheReadTokens: Int
     let cost: Double
+
+    var totalInputTokens: Int { inputTokens + cacheWriteTokens + cacheReadTokens }
+    var totalTokens: Int { totalInputTokens + outputTokens }
 }
 
 struct DailyCostSummary {
@@ -161,21 +167,52 @@ final class CostEstimator: @unchecked Sendable {
     // MARK: - Public
 
     func scanToday() -> DailyCostSummary {
-        let today = Self.todayPrefix()
-        var summary = DailyCostSummary()
-        summary.claudeModels = scanClaude(today: today)
-        summary.codexModels = scanCodex(today: today)
-        return summary
+        let today = Calendar.current.startOfDay(for: Date())
+        return scan(since: today)[Self.dayKey(today)] ?? .empty
     }
 
-    private static func todayPrefix() -> String {
+    /// Scans transcripts and returns per-day summaries keyed by local "yyyy-MM-dd",
+    /// covering every day from `start` (inclusive) to now that has usage.
+    func scan(since start: Date) -> [String: DailyCostSummary] {
+        let claude = scanClaude(since: start)
+        let codex = scanCodex(since: start)
+        var result: [String: DailyCostSummary] = [:]
+        for day in Set(claude.keys).union(codex.keys) {
+            var summary = DailyCostSummary()
+            summary.claudeModels = Self.entries(claude[day] ?? [:], table: Self.claudePricing,
+                                                fallback: Self.defaultClaude)
+            summary.codexModels = Self.entries(codex[day] ?? [:], table: Self.openAIPricing,
+                                               fallback: Self.defaultOpenAI)
+            result[day] = summary
+        }
+        return result
+    }
+
+    static func dayKey(_ date: Date) -> String {
+        dayFormatter().string(from: date)
+    }
+
+    static func date(fromDayKey key: String) -> Date? {
+        dayFormatter().date(from: key)
+    }
+
+    private static func dayFormatter() -> DateFormatter {
         let fmt = DateFormatter()
+        fmt.locale = Locale(identifier: "en_US_POSIX")
         fmt.dateFormat = "yyyy-MM-dd"
         fmt.timeZone = .current
-        return fmt.string(from: Date())
+        return fmt
     }
 
-    // MARK: - Claude transcript scanning
+    private static func parseTimestamp(_ ts: String) -> Date? {
+        let fmt = ISO8601DateFormatter()
+        fmt.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let d = fmt.date(from: ts) { return d }
+        fmt.formatOptions = [.withInternetDateTime]
+        return fmt.date(from: ts)
+    }
+
+    // MARK: - Tallies
 
     private struct TokenTally {
         var input: Int = 0
@@ -185,52 +222,53 @@ final class CostEstimator: @unchecked Sendable {
         var cacheWrite1h: Int = 0
     }
 
-    private func scanClaude(today: String) -> [ModelCostEntry] {
-        let home = FileManager.default.homeDirectoryForCurrentUser
-        let projectsDir = home.appendingPathComponent(".claude/projects")
-        let fm = FileManager.default
+    /// day -> model key -> tally
+    private typealias DayTallies = [String: [String: TokenTally]]
 
-        guard let projectDirs = try? fm.contentsOfDirectory(
-            at: projectsDir, includingPropertiesForKeys: nil) else { return [] }
+    private static let fastSuffix = " (fast)"
 
-        var tallies: [String: TokenTally] = [:]
-        var seenIds: Set<String> = []
-        let todayFmt = DateFormatter()
-        todayFmt.dateFormat = "yyyy-MM-dd"
-        todayFmt.timeZone = .current
-
-        for dir in projectDirs {
-            var isDir: ObjCBool = false
-            guard fm.fileExists(atPath: dir.path, isDirectory: &isDir), isDir.boolValue else { continue }
-            guard let files = try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil) else { continue }
-
-            for file in files where file.pathExtension == "jsonl" {
-                guard let attrs = try? fm.attributesOfItem(atPath: file.path),
-                      let modDate = attrs[.modificationDate] as? Date,
-                      todayFmt.string(from: modDate) == today else { continue }
-
-                scanClaudeFile(file, today: today, tallies: &tallies, seenIds: &seenIds)
-            }
-        }
-
-        return tallies.map { key, tally in
-            let fast = key.hasSuffix(Self.fastSuffix)
-            let model = fast ? String(key.dropLast(Self.fastSuffix.count)) : key
-            let p = Self.pricing(for: model, in: Self.claudePricing, fallback: Self.defaultClaude)
+    private static func entries(_ tallies: [String: TokenTally],
+                                table: [(prefix: String, pricing: ModelPricing)],
+                                fallback: ModelPricing) -> [ModelCostEntry] {
+        tallies.map { key, tally in
+            let fast = key.hasSuffix(fastSuffix)
+            let model = fast ? String(key.dropLast(fastSuffix.count)) : key
+            let p = pricing(for: model, in: table, fallback: fallback)
             return ModelCostEntry(
                 model: key,
-                inputTokens: tally.input + tally.cacheWrite + tally.cacheWrite1h + tally.cacheRead,
+                inputTokens: tally.input,
                 outputTokens: tally.output,
+                cacheWriteTokens: tally.cacheWrite + tally.cacheWrite1h,
+                cacheReadTokens: tally.cacheRead,
                 cost: p.cost(input: tally.input, output: tally.output,
                              cacheWrite: tally.cacheWrite, cacheRead: tally.cacheRead,
                              cacheWrite1h: tally.cacheWrite1h, fast: fast))
         }.sorted { $0.cost > $1.cost }
     }
 
-    private static let fastSuffix = " (fast)"
+    // MARK: - Claude transcript scanning
 
-    private func scanClaudeFile(_ url: URL, today: String,
-                                tallies: inout [String: TokenTally],
+    private func scanClaude(since start: Date) -> DayTallies {
+        let projectsDir = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".claude/projects")
+        // Recursive: subagent transcripts live in <project>/<session>/subagents/*.jsonl
+        guard let files = FileManager.default.enumerator(
+            at: projectsDir, includingPropertiesForKeys: [.contentModificationDateKey]) else { return [:] }
+
+        var tallies: DayTallies = [:]
+        var seenIds: Set<String> = []
+
+        for case let file as URL in files where file.pathExtension == "jsonl" {
+            guard let modDate = try? file.resourceValues(forKeys: [.contentModificationDateKey])
+                    .contentModificationDate,
+                  modDate >= start else { continue }
+            scanClaudeFile(file, since: start, tallies: &tallies, seenIds: &seenIds)
+        }
+        return tallies
+    }
+
+    private func scanClaudeFile(_ url: URL, since start: Date,
+                                tallies: inout DayTallies,
                                 seenIds: inout Set<String>) {
         guard let content = try? String(contentsOf: url, encoding: .utf8) else { return }
 
@@ -239,7 +277,8 @@ final class CostEstimator: @unchecked Sendable {
             guard let data = line.data(using: .utf8),
                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { continue }
 
-            guard let ts = json["timestamp"] as? String, ts.hasPrefix(today) else { continue }
+            guard let ts = json["timestamp"] as? String,
+                  let date = Self.parseTimestamp(ts), date >= start else { continue }
             guard let msg = json["message"] as? [String: Any],
                   let msgId = msg["id"] as? String,
                   let model = msg["model"] as? String,
@@ -248,8 +287,9 @@ final class CostEstimator: @unchecked Sendable {
             guard !seenIds.contains(msgId) else { continue }
             seenIds.insert(msgId)
 
+            let day = Self.dayKey(date)
             let key = (usage["speed"] as? String) == "fast" ? model + Self.fastSuffix : model
-            var t = tallies[key, default: TokenTally()]
+            var t = tallies[day, default: [:]][key, default: TokenTally()]
             t.input += usage["input_tokens"] as? Int ?? 0
             t.output += usage["output_tokens"] as? Int ?? 0
             t.cacheRead += usage["cache_read_input_tokens"] as? Int ?? 0
@@ -261,41 +301,40 @@ final class CostEstimator: @unchecked Sendable {
             } else {
                 t.cacheWrite += cacheWriteTotal
             }
-            tallies[key] = t
+            tallies[day, default: [:]][key] = t
         }
     }
 
     // MARK: - Codex transcript scanning
 
-    private func scanCodex(today: String) -> [ModelCostEntry] {
-        let home = FileManager.default.homeDirectoryForCurrentUser
-        let parts = today.split(separator: "-")
-        guard parts.count == 3 else { return [] }
-        let dayDir = home.appendingPathComponent(".codex/sessions/\(parts[0])/\(parts[1])/\(parts[2])")
+    private func scanCodex(since start: Date) -> DayTallies {
+        let sessionsDir = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".codex/sessions")
+        let cal = Calendar.current
+        let fmt = DateFormatter()
+        fmt.locale = Locale(identifier: "en_US_POSIX")
+        fmt.dateFormat = "yyyy/MM/dd"
 
-        guard let files = try? FileManager.default.contentsOfDirectory(
-            at: dayDir, includingPropertiesForKeys: nil) else { return [] }
-
-        var tallies: [String: TokenTally] = [:]
+        var tallies: DayTallies = [:]
         var seenIds: Set<String> = []
 
-        for file in files where file.pathExtension == "jsonl" {
-            scanCodexFile(file, today: today, tallies: &tallies, seenIds: &seenIds)
+        // Sessions are filed by start date; begin a day early to catch sessions that ran past midnight
+        guard var day = cal.date(byAdding: .day, value: -1, to: cal.startOfDay(for: start)) else { return [:] }
+        while day <= Date() {
+            let dayDir = sessionsDir.appendingPathComponent(fmt.string(from: day))
+            if let files = try? FileManager.default.contentsOfDirectory(at: dayDir, includingPropertiesForKeys: nil) {
+                for file in files where file.pathExtension == "jsonl" {
+                    scanCodexFile(file, since: start, tallies: &tallies, seenIds: &seenIds)
+                }
+            }
+            guard let next = cal.date(byAdding: .day, value: 1, to: day) else { break }
+            day = next
         }
-
-        return tallies.map { model, tally in
-            let p = Self.pricing(for: model, in: Self.openAIPricing, fallback: Self.defaultOpenAI)
-            return ModelCostEntry(
-                model: model,
-                inputTokens: tally.input + tally.cacheRead,
-                outputTokens: tally.output,
-                cost: p.cost(input: tally.input, output: tally.output,
-                             cacheWrite: tally.cacheWrite, cacheRead: tally.cacheRead))
-        }.sorted { $0.cost > $1.cost }
+        return tallies
     }
 
-    private func scanCodexFile(_ url: URL, today: String,
-                               tallies: inout [String: TokenTally],
+    private func scanCodexFile(_ url: URL, since start: Date,
+                               tallies: inout DayTallies,
                                seenIds: inout Set<String>) {
         guard let content = try? String(contentsOf: url, encoding: .utf8) else { return }
 
@@ -315,7 +354,8 @@ final class CostEstimator: @unchecked Sendable {
             }
 
             guard type == "token_usage_record" else { continue }
-            guard let ts = json["timestamp"] as? String, ts.hasPrefix(today) else { continue }
+            guard let ts = json["timestamp"] as? String,
+                  let date = Self.parseTimestamp(ts), date >= start else { continue }
             guard let payload = json["payload"] as? [String: Any],
                   let usage = payload["usage"] as? [String: Any],
                   let responseId = payload["response_id"] as? String else { continue }
@@ -327,12 +367,13 @@ final class CostEstimator: @unchecked Sendable {
             let cacheWrite = usage["cache_write_input_tokens"] as? Int ?? 0
             let outputTokens = usage["output_tokens"] as? Int ?? 0
 
-            var t = tallies[currentModel, default: TokenTally()]
+            let day = Self.dayKey(date)
+            var t = tallies[day, default: [:]][currentModel, default: TokenTally()]
             t.input += max(totalInput - cachedRead - cacheWrite, 0)
             t.output += outputTokens
             t.cacheWrite += cacheWrite
             t.cacheRead += cachedRead
-            tallies[currentModel] = t
+            tallies[day, default: [:]][currentModel] = t
         }
     }
 }

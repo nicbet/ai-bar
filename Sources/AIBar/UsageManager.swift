@@ -150,6 +150,8 @@ final class UsageManager: ObservableObject {
     @Published var codexAvailable: Bool = false
     @Published var showEstimatedCost: Bool
     @Published var dailyCost: DailyCostSummary = .empty
+    /// Bumped whenever stored daily cost history changes, so history views can reload
+    @Published var costHistoryRevision = 0
 
     private var timer: Timer?
     private var pollTask: Task<Void, Never>?
@@ -183,6 +185,7 @@ final class UsageManager: ObservableObject {
         checkCredentials()
         HistoryStore.shared.pruneOldEntries()
         refreshCost()
+        backfillCostHistory()
         startPolling()
     }
 
@@ -271,8 +274,11 @@ final class UsageManager: ObservableObject {
             }
 
             if await self.showEstimatedCost {
-                let cost = CostEstimator.shared.scanToday()
-                await MainActor.run { self.dailyCost = cost }
+                let cost = Self.scanAndStoreRecentCosts()
+                await MainActor.run {
+                    self.dailyCost = cost
+                    self.costHistoryRevision += 1
+                }
             }
         }
     }
@@ -303,16 +309,70 @@ final class UsageManager: ObservableObject {
     func setShowEstimatedCost(_ show: Bool) {
         showEstimatedCost = show
         save()
-        if show { refreshCost() }
+        if show {
+            refreshCost()
+            backfillCostHistory()
+        }
     }
 
     func refreshCost() {
         guard showEstimatedCost else { return }
         Task.detached {
-            let cost = CostEstimator.shared.scanToday()
-            await MainActor.run { self.dailyCost = cost }
+            let cost = Self.scanAndStoreRecentCosts()
+            await MainActor.run {
+                self.dailyCost = cost
+                self.costHistoryRevision += 1
+            }
         }
     }
+
+    /// Rescans yesterday and today (yesterday can still gain late entries), stores both,
+    /// and returns today's summary.
+    nonisolated private static func scanAndStoreRecentCosts() -> DailyCostSummary {
+        let cal = Calendar.current
+        let today = cal.startOfDay(for: Date())
+        let yesterday = cal.date(byAdding: .day, value: -1, to: today) ?? today
+        let scanned = CostEstimator.shared.scan(since: yesterday)
+        for day in [yesterday, today] {
+            let key = CostEstimator.dayKey(day)
+            HistoryStore.shared.storeCosts(day: key, summary: scanned[key] ?? .empty)
+        }
+        return scanned[CostEstimator.dayKey(today)] ?? .empty
+    }
+
+    /// Fills in days older than yesterday that have transcripts but no stored costs yet.
+    /// Stored days are never overwritten, so history survives transcript cleanup.
+    private func backfillCostHistory() {
+        guard showEstimatedCost else { return }
+        Task.detached(priority: .utility) {
+            let cal = Calendar.current
+            let today = cal.startOfDay(for: Date())
+            guard let windowStart = cal.date(byAdding: .day, value: -Self.costHistoryDays, to: today),
+                  let yesterday = cal.date(byAdding: .day, value: -1, to: today) else { return }
+            let yesterdayKey = CostEstimator.dayKey(yesterday)
+            // After the first full backfill, only scan the gap since the last completed one
+            var start = windowStart
+            if let doneKey = UserDefaults.standard.string(forKey: Self.backfillDoneKey),
+               let done = CostEstimator.date(fromDayKey: doneKey) {
+                if doneKey >= yesterdayKey { return }
+                start = max(start, done)
+            }
+            let stored = HistoryStore.shared.storedCostDays()
+            let scanned = CostEstimator.shared.scan(since: start)
+            var added = 0
+            for (day, summary) in scanned where day < yesterdayKey && !stored.contains(day) {
+                HistoryStore.shared.storeCosts(day: day, summary: summary)
+                added += 1
+            }
+            UserDefaults.standard.set(yesterdayKey, forKey: Self.backfillDoneKey)
+            if added > 0 {
+                await MainActor.run { self.costHistoryRevision += 1 }
+            }
+        }
+    }
+
+    nonisolated static let costHistoryDays = 90
+    nonisolated private static let backfillDoneKey = "costBackfillThrough"
 
     private func save() {
         let state = AppState(

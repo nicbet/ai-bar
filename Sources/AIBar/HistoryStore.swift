@@ -43,6 +43,17 @@ final class HistoryStore: @unchecked Sendable {
         );
         CREATE INDEX IF NOT EXISTS idx_snapshots_service_time
             ON usage_snapshots(service, timestamp);
+        CREATE TABLE IF NOT EXISTS daily_costs (
+            day TEXT NOT NULL,
+            service TEXT NOT NULL,
+            model TEXT NOT NULL,
+            input_tokens INTEGER NOT NULL,
+            output_tokens INTEGER NOT NULL,
+            cache_write_tokens INTEGER NOT NULL,
+            cache_read_tokens INTEGER NOT NULL,
+            cost REAL NOT NULL,
+            PRIMARY KEY (day, service, model)
+        );
         """
         var errmsg: UnsafeMutablePointer<CChar>?
         if sqlite3_exec(db, sql, nil, nil, &errmsg) != SQLITE_OK {
@@ -117,9 +128,95 @@ final class HistoryStore: @unchecked Sendable {
         return results
     }
 
+    // MARK: - Daily costs
+
+    /// Replaces all stored cost rows for `day` ("yyyy-MM-dd") with `summary`.
+    func storeCosts(day: String, summary: DailyCostSummary) {
+        guard let db else { return }
+        sqlite3_exec(db, "BEGIN;", nil, nil, nil)
+
+        var del: OpaquePointer?
+        if sqlite3_prepare_v2(db, "DELETE FROM daily_costs WHERE day = ?;", -1, &del, nil) == SQLITE_OK {
+            sqlite3_bind_text(del, 1, day, -1, SQLITE_TRANSIENT)
+            sqlite3_step(del)
+        }
+        sqlite3_finalize(del)
+
+        let sql = "INSERT INTO daily_costs (day, service, model, input_tokens, output_tokens, cache_write_tokens, cache_read_tokens, cost) VALUES (?, ?, ?, ?, ?, ?, ?, ?);"
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+            sqlite3_exec(db, "ROLLBACK;", nil, nil, nil)
+            return
+        }
+        defer { sqlite3_finalize(stmt) }
+
+        let rows = summary.claudeModels.map { ("claude", $0) } + summary.codexModels.map { ("codex", $0) }
+        for (service, entry) in rows {
+            sqlite3_reset(stmt)
+            sqlite3_bind_text(stmt, 1, day, -1, SQLITE_TRANSIENT)
+            sqlite3_bind_text(stmt, 2, service, -1, SQLITE_TRANSIENT)
+            sqlite3_bind_text(stmt, 3, entry.model, -1, SQLITE_TRANSIENT)
+            sqlite3_bind_int64(stmt, 4, Int64(entry.inputTokens))
+            sqlite3_bind_int64(stmt, 5, Int64(entry.outputTokens))
+            sqlite3_bind_int64(stmt, 6, Int64(entry.cacheWriteTokens))
+            sqlite3_bind_int64(stmt, 7, Int64(entry.cacheReadTokens))
+            sqlite3_bind_double(stmt, 8, entry.cost)
+            if sqlite3_step(stmt) != SQLITE_DONE {
+                logToFile("HistoryStore: cost insert failed")
+            }
+        }
+        sqlite3_exec(db, "COMMIT;", nil, nil, nil)
+    }
+
+    /// Days ("yyyy-MM-dd") that already have stored cost rows.
+    func storedCostDays() -> Set<String> {
+        guard let db else { return [] }
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, "SELECT DISTINCT day FROM daily_costs;", -1, &stmt, nil) == SQLITE_OK else { return [] }
+        defer { sqlite3_finalize(stmt) }
+
+        var days: Set<String> = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            if let raw = sqlite3_column_text(stmt, 0) { days.insert(String(cString: raw)) }
+        }
+        return days
+    }
+
+    /// Stored per-day summaries from `day` ("yyyy-MM-dd") onward.
+    func costHistory(since day: String) -> [String: DailyCostSummary] {
+        guard let db else { return [:] }
+        let sql = "SELECT day, service, model, input_tokens, output_tokens, cache_write_tokens, cache_read_tokens, cost FROM daily_costs WHERE day >= ? ORDER BY day ASC, cost DESC;"
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [:] }
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_text(stmt, 1, day, -1, SQLITE_TRANSIENT)
+
+        var result: [String: DailyCostSummary] = [:]
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            guard let dayRaw = sqlite3_column_text(stmt, 0),
+                  let serviceRaw = sqlite3_column_text(stmt, 1),
+                  let modelRaw = sqlite3_column_text(stmt, 2) else { continue }
+            let entry = ModelCostEntry(
+                model: String(cString: modelRaw),
+                inputTokens: Int(sqlite3_column_int64(stmt, 3)),
+                outputTokens: Int(sqlite3_column_int64(stmt, 4)),
+                cacheWriteTokens: Int(sqlite3_column_int64(stmt, 5)),
+                cacheReadTokens: Int(sqlite3_column_int64(stmt, 6)),
+                cost: sqlite3_column_double(stmt, 7))
+            let d = String(cString: dayRaw)
+            if String(cString: serviceRaw) == "claude" {
+                result[d, default: DailyCostSummary()].claudeModels.append(entry)
+            } else {
+                result[d, default: DailyCostSummary()].codexModels.append(entry)
+            }
+        }
+        return result
+    }
+
     func pruneOldEntries(olderThanDays days: Int = 90) {
         guard let db else { return }
         let sql = "DELETE FROM usage_snapshots WHERE timestamp < datetime('now', '-\(days) days');"
         sqlite3_exec(db, sql, nil, nil, nil)
+        sqlite3_exec(db, "DELETE FROM daily_costs WHERE day < date('now', '-400 days');", nil, nil, nil)
     }
 }

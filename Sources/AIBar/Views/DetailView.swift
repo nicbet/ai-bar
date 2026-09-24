@@ -236,7 +236,7 @@ struct DetailView: View {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(entry.model)
                                 .font(.system(.caption, design: .monospaced))
-                            Text("\(formatTokenCount(entry.inputTokens)) in · \(formatTokenCount(entry.outputTokens)) out")
+                            Text("\(formatTokenCount(entry.totalInputTokens)) in · \(formatTokenCount(entry.outputTokens)) out")
                                 .font(.system(.caption2, design: .monospaced))
                                 .foregroundStyle(.tertiary)
                         }
