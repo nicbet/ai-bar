@@ -6,18 +6,20 @@ A macOS menu bar app that tracks Claude and Codex (ChatGPT) token usage in real 
 ![Swift 5.9](https://img.shields.io/badge/Swift-5.9-orange)
 ![License: MIT](https://img.shields.io/badge/License-MIT-green)
 
-![AI Bar screenshot](docs/screenshot.webp)
+![AI Bar screenshot](docs/screenshot.jpg)
 
 ## Features
 
 - **Ring progress bars** showing 5-hour session usage for both Claude and Codex
-- **Pacing indicator** — a tick mark on each ring showing where usage *should* be for even consumption across the window
+- **Pacing indicator** — a tick mark on each ring showing where usage _should_ be for even consumption across the window
 - **Weekly limits** — horizontal progress bar below each ring showing 7-day utilization
 - **Auto-detection** — discovers which providers are installed, shows setup instructions for missing ones
 - **Settings window** — enable/disable providers, adjust refresh interval (1m–15m)
 - **Detail view** — click a ring to open a window with usage history charts (24h/7d/30d)
 - **Live data** — polls the Anthropic and OpenAI OAuth APIs every 5 minutes (no manual input needed)
 - **Usage history** — SQLite database recording every poll for trend analysis
+- **Estimated API cost** (optional, enable in Settings) — what today's Claude Code and Codex usage would cost at published API list prices, shown in the menu bar and popover
+- **Spending window** — click the cost row for a daily cost chart (14d/30d/90d) and a receipt-style, per-model breakdown for any day
 - **Exponential backoff** on rate limits (429s)
 - **No open ports** — reads credentials locally, no network listeners
 
@@ -27,6 +29,7 @@ A macOS menu bar app that tracks Claude and Codex (ChatGPT) token usage in real 
 - Xcode Command Line Tools (`xcode-select --install`)
 
 At least one of:
+
 - [Claude Code](https://claude.ai/code) logged in (`claude login`)
 - [Codex](https://chatgpt.com) logged in (`codex login`)
 
@@ -44,12 +47,16 @@ make run       # builds and launches
 
 ### Data Sources
 
-| Service | API Endpoint | Auth |
-|---------|-------------|------|
-| Claude | `GET https://api.anthropic.com/api/oauth/usage` | OAuth token from macOS Keychain (`Claude Code-credentials`) |
-| Codex | `GET https://chatgpt.com/backend-api/wham/usage` | Access token from `~/.codex/auth.json` |
+| Service | API Endpoint                                     | Auth                                                        |
+| ------- | ------------------------------------------------ | ----------------------------------------------------------- |
+| Claude  | `GET https://api.anthropic.com/api/oauth/usage`  | OAuth token from macOS Keychain (`Claude Code-credentials`) |
+| Codex   | `GET https://chatgpt.com/backend-api/wham/usage` | Access token from `~/.codex/auth.json`                      |
 
 Both APIs return utilization as a percentage and a reset timestamp. No token counting or file parsing needed.
+
+### Cost Estimates
+
+Cost estimates are computed locally from session transcripts (`~/.claude/projects/**/*.jsonl`, including subagents, and `~/.codex/sessions/`). Token counts are priced per model at the published API list prices, including cache writes/reads and fast mode. Daily totals are stored so history survives transcript cleanup; on first enable, up to 90 days are backfilled from existing transcripts. These are estimates of equivalent API cost, not a bill.
 
 ### Pacing
 
@@ -57,11 +64,11 @@ The tick mark on each ring shows where you'd be if you consumed your budget even
 
 ### Data Storage
 
-| File | Purpose |
-|------|---------|
-| `~/.config/ai-bar/state.json` | Current usage state (persisted across restarts) |
-| `~/.config/ai-bar/history.db` | SQLite database of usage snapshots (auto-pruned at 90 days) |
-| `~/.config/ai-bar/debug.log` | Debug log for API errors |
+| File                          | Purpose                                                                                               |
+| ----------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `~/.config/ai-bar/state.json` | Current usage state (persisted across restarts)                                                       |
+| `~/.config/ai-bar/history.db` | SQLite database of usage snapshots (auto-pruned at 90 days) and daily cost estimates (kept ~400 days) |
+| `~/.config/ai-bar/debug.log`  | Debug log for API errors                                                                              |
 
 ### Keychain Access
 
@@ -69,7 +76,7 @@ On first launch, macOS may prompt you to allow AI Bar to read the Claude Code ke
 
 ## Usage
 
-The menu bar shows icons and percentages for each active provider. Click to open the popover with ring displays, pacing indicators, and weekly limits. Click a ring to open a detail window with usage history charts.
+The menu bar shows icons and percentages for each active provider. Click to open the popover with ring displays, pacing indicators, and weekly limits. Click a ring to open a detail window with usage history charts. With estimated cost enabled, click the cost row to open the spending window; click a bar in the chart (or use the arrows) to see that day's receipt.
 
 ## License
 
