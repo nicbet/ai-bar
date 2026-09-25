@@ -25,7 +25,7 @@ private struct DailyServiceCost: Identifiable {
 
 struct SpendingView: View {
     @EnvironmentObject var manager: UsageManager
-    @State private var range: SpendingRange = .month
+    @State private var range: SpendingRange = .twoWeeks
     @State private var history: [String: DailyCostSummary] = [:]
     @State private var selectedDay: String = CostEstimator.dayKey(Date())
 
@@ -73,7 +73,10 @@ struct SpendingView: View {
         .frame(minWidth: 480, minHeight: 560)
         .background(.regularMaterial)
         .navigationTitle("API Spending")
-        .onAppear { loadHistory() }
+        .onAppear {
+            selectedDay = todayKey
+            loadHistory()
+        }
         .onChange(of: range) { _, _ in loadHistory() }
         .onChange(of: manager.costHistoryRevision) { _, _ in loadHistory() }
     }
@@ -87,6 +90,8 @@ struct SpendingView: View {
                 .font(.system(.title2, design: .rounded))
                 .fontWeight(.bold)
             Spacer()
+            Button("Today") { selectedDay = todayKey }
+                .disabled(selectedDay == todayKey)
             Picker("Range", selection: $range) {
                 ForEach(SpendingRange.allCases) { r in
                     Text(r.rawValue).tag(r)
