@@ -67,10 +67,12 @@ struct ProviderLabel {
 enum MenuBarRenderer {
     static func render(providers: [ProviderLabel], costLabel: String? = nil) -> NSImage {
         let height: CGFloat = 18
-        let iconSize: CGFloat = 14
+        // Brand glyphs span ~26 of their 30-unit viewBox; 18.5pt makes them
+        // 16pt tall like other menu bar icons (the padding may overhang).
+        let iconSize: CGFloat = 18.5
         let spacing: CGFloat = 3
         let gap: CGFloat = 6
-        let font = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .medium)
+        let font = NSFont.monospacedDigitSystemFont(ofSize: NSFont.menuBarFont(ofSize: 0).pointSize, weight: .regular)
 
         if providers.isEmpty && costLabel == nil {
             let fallback = NSImage(size: NSSize(width: 18, height: height))
