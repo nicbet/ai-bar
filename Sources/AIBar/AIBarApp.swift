@@ -5,6 +5,19 @@ import AppKit
 struct AIBarApp: App {
     @StateObject private var manager = UsageManager()
 
+    init() {
+        // Dev tool: `AIBar --snapshot <dir>` renders README screenshots with sample data and exits
+        guard let flag = CommandLine.arguments.firstIndex(of: "--snapshot") else { return }
+        let dir = CommandLine.arguments.dropFirst(flag + 1).first ?? "."
+        do {
+            for url in try Snapshot.write(to: URL(fileURLWithPath: dir)) { print(url.path) }
+            exit(0)
+        } catch {
+            FileHandle.standardError.write(Data("snapshot failed: \(error)\n".utf8))
+            exit(1)
+        }
+    }
+
     var body: some Scene {
         MenuBarExtra {
             PopoverView()

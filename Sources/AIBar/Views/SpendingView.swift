@@ -28,6 +28,15 @@ struct SpendingView: View {
     @State private var range: SpendingRange = .twoWeeks
     @State private var history: [String: DailyCostSummary] = [:]
     @State private var selectedDay: String = CostEstimator.dayKey(Date())
+    /// Fixed history for screenshots; when set, the history store is never read
+    private let previewHistory: [String: DailyCostSummary]?
+
+    init(previewHistory: [String: DailyCostSummary]? = nil, range: SpendingRange = .twoWeeks, selectedDay: String? = nil) {
+        self.previewHistory = previewHistory
+        _history = State(initialValue: previewHistory ?? [:])
+        _range = State(initialValue: range)
+        _selectedDay = State(initialValue: selectedDay ?? CostEstimator.dayKey(Date()))
+    }
 
     private var todayKey: String { CostEstimator.dayKey(Date()) }
 
@@ -74,6 +83,7 @@ struct SpendingView: View {
         .background(.regularMaterial)
         .navigationTitle("API Spending")
         .onAppear {
+            guard previewHistory == nil else { return }
             selectedDay = todayKey
             loadHistory()
         }
@@ -183,6 +193,7 @@ struct SpendingView: View {
     }
 
     private func loadHistory() {
+        guard previewHistory == nil else { return }
         let since = CostEstimator.dayKey(Calendar.current.date(
             byAdding: .day, value: -SpendingRange.quarter.days, to: Date()) ?? Date())
         history = HistoryStore.shared.costHistory(since: since)

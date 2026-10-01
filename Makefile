@@ -1,4 +1,4 @@
-.PHONY: build bundle install run clean
+.PHONY: build bundle install run snapshot clean
 
 APP_NAME := AI Bar
 BUNDLE := AI Bar.app
@@ -24,6 +24,10 @@ install: bundle
 
 run: bundle
 	open "$(BUNDLE)"
+
+snapshot:
+	swift build
+	$$(swift build --show-bin-path)/AIBar --snapshot docs
 
 clean:
 	swift package clean

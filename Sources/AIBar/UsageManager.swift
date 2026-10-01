@@ -189,6 +189,16 @@ final class UsageManager: ObservableObject {
         startPolling()
     }
 
+    /// A manager holding fixed data, for rendering README screenshots. Never polls or saves.
+    init(preview claude: ServiceUsage, codex: ServiceUsage, dailyCost: DailyCostSummary) {
+        stateURL = FileManager.default.temporaryDirectory.appendingPathComponent("ai-bar-preview.json")
+        self.claude = claude; self.codex = codex; pollInterval = 300
+        claudeEnabled = true; codexEnabled = true
+        claudeAvailable = true; codexAvailable = true
+        showEstimatedCost = true
+        self.dailyCost = dailyCost
+    }
+
     func checkCredentials() {
         claudeAvailable = APIClient.claudeCredentialsExist()
         codexAvailable = APIClient.codexCredentialsExist()

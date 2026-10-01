@@ -6,7 +6,15 @@ A macOS menu bar app that tracks Claude and Codex (ChatGPT) token usage in real 
 ![Swift 5.9](https://img.shields.io/badge/Swift-5.9-orange)
 ![License: MIT](https://img.shields.io/badge/License-MIT-green)
 
-![AI Bar screenshot](docs/screenshot.jpg)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/popover-dark.png">
+  <img alt="The AI Bar popover: Claude and Codex usage rings with pacing ticks, weekly limits, and today's estimated API cost" src="docs/popover-light.png" width="600">
+</picture>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/spending-dark.png">
+  <img alt="The spending window: a 30-day chart of estimated daily cost and a receipt itemizing today's usage by model" src="docs/spending-light.png" width="560">
+</picture>
 
 ## Features
 
@@ -41,6 +49,7 @@ The app auto-detects which providers are available and only shows those.
 make bundle    # builds release binary + .app bundle
 make install   # copies to /Applications
 make run       # builds and launches
+make snapshot  # renders the README screenshots in docs/ from sample data
 ```
 
 ## How It Works
