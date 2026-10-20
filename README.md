@@ -31,10 +31,9 @@ A macOS menu bar app that tracks Claude and Codex (ChatGPT) token usage in real 
 - **Exponential backoff** on rate limits (429s)
 - **No open ports** — reads credentials locally, no network listeners
 
-## Prerequisites
+## Requirements
 
 - macOS 14.0+
-- Xcode Command Line Tools (`xcode-select --install`)
 
 At least one of:
 
@@ -43,14 +42,38 @@ At least one of:
 
 The app auto-detects which providers are available and only shows those.
 
-## Build & Install
+## Building it yourself
+
+There are no prebuilt downloads: you build AI Bar from source. The only dev dependency is the Xcode Command Line Tools (`xcode-select --install`), which bring `swift` (5.9 or later) and `codesign`. You don't need an Apple Developer account.
+
+```bash
+git clone https://github.com/nicbet/ai-bar.git
+cd ai-bar
+make signing-cert   # once: create a local code-signing certificate (see below)
+make install        # build the release app and copy it to /Applications
+```
+
+The other tasks:
 
 ```bash
 make bundle    # builds release binary + .app bundle
-make install   # copies to /Applications
 make run       # builds and launches
 make snapshot  # renders the README screenshots in docs/ from sample data
 ```
+
+### Signing certificate
+
+AI Bar isn't signed with an Apple Developer ID. Without a certificate, `make bundle` signs it ad hoc, and an ad-hoc signature is different for every build, so macOS sees each rebuild as a new app. A self-signed certificate gives every build the same identity.
+
+`make signing-cert` runs [`scripts/create-signing-cert.sh`](scripts/create-signing-cert.sh), which:
+
+1. creates a self-signed certificate named "Local App Signing" with `openssl`, valid for 10 years and limited to code signing,
+2. imports it with its private key into your login keychain, and lets `codesign` use the key,
+3. trusts it for code signing only (macOS asks for your password).
+
+`make bundle` checks for the identity with `security find-identity -v -p codesigning` and signs with it when it is there; otherwise it signs ad hoc and says so. Cappucino and Nocchi use the same "Local App Signing" identity, so you only create it once. To use a different name, pass it to both targets: `make signing-cert SIGNING_IDENTITY="My Signing"` and `make bundle SIGNING_IDENTITY="My Signing"`. On the first signed build, macOS may ask whether `codesign` may use the key: click **Always Allow**. To remove the certificate, delete "Local App Signing" (certificate and key) in Keychain Access.
+
+The app isn't notarized. A copy you build yourself opens normally. If you copy it to another Mac, Gatekeeper blocks it the first time: click **Open Anyway** in System Settings → Privacy & Security, or run `xattr -dr com.apple.quarantine "/Applications/AI Bar.app"`.
 
 ## How It Works
 
@@ -81,7 +104,20 @@ The tick mark on each ring shows where you'd be if you consumed your budget even
 
 ### Keychain Access
 
-On first launch, macOS may prompt you to allow AI Bar to read the Claude Code keychain entry. Click **"Always Allow"** to avoid repeated prompts.
+To ask Anthropic for your usage limits, AI Bar needs the OAuth access token Claude Code signed in with. Claude Code keeps that token in your login keychain, in an item named `Claude Code-credentials`, so AI Bar reads it from there. Codex keeps its token in `~/.codex/auth.json`, which AI Bar reads as a file; that needs no prompt.
+
+AI Bar reads the keychain item by running Apple's `security` tool (`security find-generic-password -s "Claude Code-credentials" -w`). When macOS asks about it, the prompt says that **security** wants to use the item:
+
+- **Allow** grants it once. AI Bar keeps the token in memory until it quits or the token expires, then asks again.
+- **Always Allow** stops the prompts. The grant goes to the `security` tool, not to AI Bar alone, so other programs running as you that use `security` can then read the item without asking, too.
+- **Deny** means AI Bar shows no Claude usage. Codex keeps working.
+
+What AI Bar does with the tokens:
+
+- The Claude token is sent only to `https://api.anthropic.com/api/oauth/usage`, and the Codex token only to `https://chatgpt.com/backend-api/wham/usage`, each as an `Authorization: Bearer` header. These are the only network requests AI Bar makes.
+- Tokens stay in memory. They are not written to `state.json`, the history database or the debug log.
+
+You don't have to take this on trust. All credential handling is in [`Sources/AIBar/APIClient.swift`](Sources/AIBar/APIClient.swift): `getClaudeToken()` reads the keychain, `readCodexToken()` reads `auth.json`, and `fetchClaudeUsage()` and `fetchCodexUsage()` are where the tokens are used. `grep -rn "https://" Sources` lists every URL in the app. You can also point your coding agent at the repository and ask it, for example: "Check whether this app sends credentials anywhere other than the two usage endpoints, or stores them."
 
 ## Usage
 
