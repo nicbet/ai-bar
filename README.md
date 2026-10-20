@@ -49,8 +49,8 @@ There are no prebuilt downloads: you build AI Bar from source. The only dev depe
 ```bash
 git clone https://github.com/nicbet/ai-bar.git
 cd ai-bar
-make signing-cert   # once: create a local code-signing certificate (see below)
-make install        # build the release app and copy it to /Applications
+make signing-cert   # 1. once: create your local signing certificate (see below)
+make install        # 2. build the release app and install it in /Applications
 ```
 
 The other tasks:
