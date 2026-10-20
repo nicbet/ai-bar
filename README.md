@@ -90,3 +90,10 @@ The menu bar shows icons and percentages for each active provider. Click to open
 ## License
 
 MIT
+
+## Trademarks
+
+Claude and Claude Code are trademarks or registered trademarks of Anthropic, PBC. OpenAI, ChatGPT
+and Codex are trademarks or registered trademarks of OpenAI. The Claude and ChatGPT icons in
+`icons/` were redrawn by hand and are used only to identify each provider. AI Bar is an independent
+project and is not affiliated with, endorsed by or sponsored by Anthropic or OpenAI.
