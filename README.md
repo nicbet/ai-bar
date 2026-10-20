@@ -106,18 +106,20 @@ The tick mark on each ring shows where you'd be if you consumed your budget even
 
 To ask Anthropic for your usage limits, AI Bar needs the OAuth access token Claude Code signed in with. Claude Code keeps that token in your login keychain, in an item named `Claude Code-credentials`, so AI Bar reads it from there. Codex keeps its token in `~/.codex/auth.json`, which AI Bar reads as a file; that needs no prompt.
 
-AI Bar reads the keychain item by running Apple's `security` tool (`security find-generic-password -s "Claude Code-credentials" -w`). When macOS asks about it, the prompt says that **security** wants to use the item:
+AI Bar reads the item with the Security framework (`SecItemCopyMatching`). The item belongs to Claude Code, so the first time AI Bar reads it, macOS asks whether **AI Bar** may use it:
 
+- **Always Allow** adds AI Bar, and only AI Bar, to the item's access list, so it isn't asked again. The grant is tied to AI Bar's code signature. With the [signing certificate](#signing-certificate), every build carries the same identity; with an ad-hoc build, expect the prompt again after each rebuild.
 - **Allow** grants it once. AI Bar keeps the token in memory until it quits or the token expires, then asks again.
-- **Always Allow** stops the prompts. The grant goes to the `security` tool, not to AI Bar alone, so other programs running as you that use `security` can then read the item without asking, too.
 - **Deny** means AI Bar shows no Claude usage. Codex keeps working.
+
+Checking whether you're logged in to Claude Code only looks up the item's name, which never prompts.
 
 What AI Bar does with the tokens:
 
 - The Claude token is sent only to `https://api.anthropic.com/api/oauth/usage`, and the Codex token only to `https://chatgpt.com/backend-api/wham/usage`, each as an `Authorization: Bearer` header. These are the only network requests AI Bar makes.
 - Tokens stay in memory. They are not written to `state.json`, the history database or the debug log.
 
-You don't have to take this on trust. All credential handling is in [`Sources/AIBar/APIClient.swift`](Sources/AIBar/APIClient.swift): `getClaudeToken()` reads the keychain, `readCodexToken()` reads `auth.json`, and `fetchClaudeUsage()` and `fetchCodexUsage()` are where the tokens are used. `grep -rn "https://" Sources` lists every URL in the app. You can also point your coding agent at the repository and ask it, for example: "Check whether this app sends credentials anywhere other than the two usage endpoints, or stores them."
+You don't have to take this on trust. All credential handling is in [`Sources/AIBar/APIClient.swift`](Sources/AIBar/APIClient.swift): `getClaudeToken()` reads the keychain (`claudeCredentialsExist()` only checks that the item is there), `readCodexToken()` reads `auth.json`, and `fetchClaudeUsage()` and `fetchCodexUsage()` are where the tokens are used. `grep -rn "https://" Sources` lists every URL in the app. You can also point your coding agent at the repository and ask it, for example: "Check whether this app sends credentials anywhere other than the two usage endpoints, or stores them."
 
 ## Usage
 

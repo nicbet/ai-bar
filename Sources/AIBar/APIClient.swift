@@ -61,22 +61,22 @@ final class APIClient: @unchecked Sendable {
         if claudeTokenAttempted { throw APIError.noToken("Keychain denied — click Allow next time") }
 
         claudeTokenAttempted = true
-        let proc = Process()
-        proc.executableURL = URL(fileURLWithPath: "/usr/bin/security")
-        proc.arguments = ["find-generic-password", "-s", "Claude Code-credentials", "-w"]
-        let pipe = Pipe()
-        proc.standardOutput = pipe
-        proc.standardError = FileHandle.nullDevice
-        try proc.run()
-        proc.waitUntilExit()
-
-        guard proc.terminationStatus == 0 else {
-            logToFile("Claude keychain: denied (exit \(proc.terminationStatus))")
-            throw APIError.noToken("Keychain denied")
+        // Read Claude Code's item with the Security framework, so the keychain prompt (and an
+        // "Always Allow") applies to AI Bar itself rather than to /usr/bin/security.
+        var query = claudeKeychainQuery
+        query[kSecReturnData as String] = true
+        var item: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &item)
+        guard status == errSecSuccess else {
+            logToFile("Claude keychain: \(SecCopyErrorMessageString(status, nil) as String? ?? "error") (\(status))")
+            switch status {
+            case errSecItemNotFound: throw APIError.noToken("No Claude Code login in keychain")
+            case errSecUserCanceled, errSecAuthFailed: throw APIError.noToken("Keychain denied")
+            default: throw APIError.noToken("Keychain error \(status)")
+            }
         }
 
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        guard let raw = String(data: data, encoding: .utf8) else {
+        guard let data = item as? Data, let raw = String(data: data, encoding: .utf8) else {
             throw APIError.noToken("Keychain data unreadable")
         }
 
@@ -104,19 +104,16 @@ final class APIClient: @unchecked Sendable {
         claudeTokenAttempted = false
     }
 
+    /// Claude Code's login item. Matching on attributes alone never shows a keychain prompt.
+    private static let claudeKeychainQuery: [String: Any] = [
+        kSecClass as String: kSecClassGenericPassword,
+        kSecAttrService as String: "Claude Code-credentials",
+        kSecMatchLimit as String: kSecMatchLimitOne,
+    ]
+    private var claudeKeychainQuery: [String: Any] { Self.claudeKeychainQuery }
+
     static func claudeCredentialsExist() -> Bool {
-        let proc = Process()
-        proc.executableURL = URL(fileURLWithPath: "/usr/bin/security")
-        proc.arguments = ["find-generic-password", "-s", "Claude Code-credentials"]
-        proc.standardOutput = FileHandle.nullDevice
-        proc.standardError = FileHandle.nullDevice
-        do {
-            try proc.run()
-            proc.waitUntilExit()
-            return proc.terminationStatus == 0
-        } catch {
-            return false
-        }
+        SecItemCopyMatching(claudeKeychainQuery as CFDictionary, nil) == errSecSuccess
     }
 
     static func codexCredentialsExist() -> Bool {
