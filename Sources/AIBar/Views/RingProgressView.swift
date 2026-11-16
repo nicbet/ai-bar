@@ -6,9 +6,12 @@ struct RingProgressView: View {
     let size: CGFloat
     let lineWidth: CGFloat
     var pacePosition: Double? = nil
+    /// Text in the middle; defaults to the whole percentage
+    var label: String? = nil
 
     init(progress: Double, colors: (Color, Color), size: CGFloat = 100, lineWidth: CGFloat = 10,
-         pacePosition: Double? = nil) {
+         pacePosition: Double? = nil, label: String? = nil) {
+        self.label = label
         self.progress = progress
         self.colors = colors
         self.size = size
@@ -47,10 +50,10 @@ struct RingProgressView: View {
                 PaceMarkerDot(position: pace, ringSize: size, lineWidth: lineWidth)
             }
 
-            Text("\(Int(progress * 100))%")
+            Text(label ?? "\(Int(progress * 100))%")
                 .font(.system(size: size * 0.26, weight: .bold, design: .rounded))
                 .contentTransition(.numericText())
-                .animation(.easeInOut(duration: 0.4), value: Int(progress * 100))
+                .animation(.easeInOut(duration: 0.4), value: label ?? "\(Int(progress * 100))")
         }
         .frame(width: size, height: size)
     }

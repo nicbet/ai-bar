@@ -53,6 +53,20 @@ struct SettingsView: View {
 
             GroupBox("Display") {
                 VStack(alignment: .leading, spacing: 4) {
+                    Picker("Main ring", selection: Binding(
+                        get: { manager.primaryIndicator },
+                        set: { manager.setPrimaryIndicator($0) }
+                    )) {
+                        Text("Auto").tag(PrimaryIndicator.auto)
+                        Text("5-hour").tag(PrimaryIndicator.session)
+                        Text("Weekly").tag(PrimaryIndicator.weekly)
+                    }
+                    .pickerStyle(.segmented)
+                    Text("Auto shows the 5-hour window when the provider reports one, otherwise weekly")
+                        .font(.system(.caption2))
+                        .foregroundStyle(.tertiary)
+                        .padding(.bottom, 8)
+
                     Toggle("Show Estimated API Cost", isOn: Binding(
                         get: { manager.showEstimatedCost },
                         set: { manager.setShowEstimatedCost($0) }
@@ -60,6 +74,42 @@ struct SettingsView: View {
                     Text("Based on published API prices, scanned from local transcripts")
                         .font(.system(.caption2))
                         .foregroundStyle(.tertiary)
+                }
+                .padding(4)
+            }
+
+            GroupBox("Pacing") {
+                VStack(alignment: .leading, spacing: 4) {
+                    Toggle("Simulate 5-hour windows", isOn: Binding(
+                        get: { manager.simulateSessions },
+                        set: { manager.setSimulateSessions($0) }
+                    ))
+                    Text("When a provider has no 5-hour limit, open a 5-hour window on first use and pace it against your weekly budget")
+                        .font(.system(.caption2))
+                        .foregroundStyle(.tertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    HStack {
+                        Text("Windows per day")
+                            .fixedSize()
+                        Spacer()
+                        Picker("", selection: Binding(
+                            get: { manager.simulatedWindowsPerDay },
+                            set: { manager.setSimulatedWindowsPerDay($0) }
+                        )) {
+                            ForEach([1.0, 2.0, 3.0, 4.0], id: \.self) { n in
+                                Text("\(Int(n))").tag(n)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+                        .frame(width: 112)
+                    }
+                    .padding(.top, 6)
+                    .disabled(!manager.simulateSessions)
+                    Text("Each window's budget: weekly headroom left ÷ windows left before the weekly reset")
+                        .font(.system(.caption2))
+                        .foregroundStyle(.tertiary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 .padding(4)
             }

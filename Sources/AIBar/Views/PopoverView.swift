@@ -46,6 +46,7 @@ struct PopoverView: View {
                 name: "Claude",
                 iconPath: BrandIcons.claudePath,
                 usage: manager.claude,
+                primary: manager.primaryIndicator,
                 colors: (Color.claudeOrange, Color.claudeBrown)
             )
         } else if !manager.claudeAvailable {
@@ -65,6 +66,7 @@ struct PopoverView: View {
                 name: "Codex",
                 iconPath: BrandIcons.codexPath,
                 usage: manager.codex,
+                primary: manager.primaryIndicator,
                 colors: (Color.codexBlue, Color.codexBlueDark)
             )
         } else if !manager.codexAvailable {

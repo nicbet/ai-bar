@@ -35,8 +35,13 @@ struct DetailView: View {
         serviceName == "claude" ? "Claude" : "Codex"
     }
 
+    private var gauges: (main: UsageGauge?, secondary: UsageGauge?) {
+        usage.gauges(primary: manager.primaryIndicator)
+    }
+
     private var sessionWindowType: String {
-        serviceName == "claude" ? "five_hour" : "primary"
+        if usage.isSimulatingSession { return UsageManager.simulatedWindowType }
+        return serviceName == "claude" ? "five_hour" : "primary"
     }
 
     private var weeklyWindowType: String {
@@ -49,7 +54,12 @@ struct DetailView: View {
                 statusHeader
                 timeRangePicker
 
-                chartSection(title: "Session Usage (5h window)", data: sessionData, color: brandColors.0)
+                if !sessionData.isEmpty || weeklyData.isEmpty {
+                    chartSection(
+                        title: usage.isSimulatingSession
+                            ? "Session Usage (simulated 5h window, % of budget)" : "Session Usage (5h window)",
+                        data: sessionData, color: brandColors.0)
+                }
 
                 if !weeklyData.isEmpty {
                     chartSection(title: "Weekly Usage", data: weeklyData, color: brandColors.1)
@@ -79,28 +89,30 @@ struct DetailView: View {
                 Text(displayName)
                     .font(.system(.title2, design: .rounded))
                     .fontWeight(.bold)
-                if !usage.formattedUsage.isEmpty {
-                    Text(usage.formattedUsage)
-                        .font(.system(.caption, design: .rounded))
-                        .foregroundStyle(.secondary)
-                }
+                Text(gauges.main?.statusText ?? "not connected")
+                    .font(.system(.caption, design: .rounded))
+                    .foregroundStyle(.secondary)
             }
 
             Spacer()
 
             VStack(alignment: .trailing, spacing: 4) {
                 HStack(spacing: 6) {
-                    Text("\(usage.percentInt)%")
+                    Text(gauges.main?.percentText ?? "0%")
                         .font(.system(size: 28, weight: .bold, design: .rounded))
                         .foregroundStyle(brandColors.0)
 
-                    paceLabel
+                    paceLabel(gauges.main?.paceLevel ?? .unknown)
                 }
 
-                if let wu = usage.weeklyUtilization {
-                    Text("Weekly: \(Int(wu * 100))%")
-                        .font(.system(.caption, design: .monospaced))
-                        .foregroundStyle(.secondary)
+                if let secondary = gauges.secondary {
+                    HStack(spacing: 6) {
+                        Text(secondary.idle ? "\(secondary.shortLabel): idle"
+                                            : "\(secondary.shortLabel): \(secondary.percentText)")
+                            .font(.system(.caption, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                        paceLabel(secondary.paceLevel)
+                    }
                 }
             }
         }
@@ -108,26 +120,15 @@ struct DetailView: View {
         .background(RoundedRectangle(cornerRadius: 10).fill(.quaternary.opacity(0.5)))
     }
 
-    private var paceLabel: some View {
-        Group {
-            let level = usage.paceLevel
-            if level != .unknown {
-                let text: String = {
-                    switch level {
-                    case .underPace:     return "Under pace"
-                    case .onPace:        return "On pace"
-                    case .slightlyAhead: return "Ahead"
-                    case .burningFast:   return "Burning fast"
-                    case .unknown:       return ""
-                    }
-                }()
-                Text(text)
-                    .font(.system(.caption2, weight: .medium))
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(Capsule().fill(level.color.opacity(0.2)))
-                    .foregroundStyle(level.color)
-            }
+    @ViewBuilder
+    private func paceLabel(_ level: PaceLevel) -> some View {
+        if level != .unknown {
+            Text(level.label)
+                .font(.system(.caption2, weight: .medium))
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(Capsule().fill(level.color.opacity(0.2)))
+                .foregroundStyle(level.color)
         }
     }
 
