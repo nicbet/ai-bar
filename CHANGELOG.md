@@ -20,6 +20,7 @@ Anthropic removed the 5-hour limit from some Claude plans. These changes keep AI
   - progress between whole weekly percents is estimated from local transcript cost, using a learned cost per weekly percent, clamped to the whole-percent readings;
   - saved across restarts; history is recorded as `five_hour_simulated` and charted in the detail window.
 - Estimated values under 10% show one decimal (`0.6%`).
+- The version is shown in the popover header and at the bottom of Settings.
 
 ### Changed
 

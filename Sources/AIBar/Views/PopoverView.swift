@@ -26,6 +26,9 @@ struct PopoverView: View {
             Text("AI Usage")
                 .font(.system(.headline, design: .rounded))
             Spacer()
+            Text("v\(AppInfo.version)")
+                .font(.system(.caption2, design: .rounded))
+                .foregroundStyle(.tertiary)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)

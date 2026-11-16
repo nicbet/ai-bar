@@ -115,6 +115,10 @@ struct SettingsView: View {
             }
 
             HStack {
+                Text("AI Bar \(AppInfo.version)")
+                    .font(.system(.caption))
+                    .foregroundStyle(.tertiary)
+                    .textSelection(.enabled)
                 Spacer()
                 Button("Check Credentials") {
                     manager.checkCredentials()
