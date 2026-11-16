@@ -59,13 +59,13 @@ struct AIBarApp: App {
         if manager.claudeEnabled && manager.claudeAvailable {
             providers.append(ProviderLabel(
                 iconPath: BrandIcons.claudePath,
-                percent: manager.claude.percentInt
+                percent: manager.claude.gauges(primary: manager.primaryIndicator).main?.percentText ?? "0%"
             ))
         }
         if manager.codexEnabled && manager.codexAvailable {
             providers.append(ProviderLabel(
                 iconPath: BrandIcons.codexPath,
-                percent: manager.codex.percentInt
+                percent: manager.codex.gauges(primary: manager.primaryIndicator).main?.percentText ?? "0%"
             ))
         }
         return providers
@@ -74,7 +74,7 @@ struct AIBarApp: App {
 
 struct ProviderLabel {
     let iconPath: String
-    let percent: Int
+    let percent: String
 }
 
 enum MenuBarRenderer {
@@ -102,7 +102,7 @@ enum MenuBarRenderer {
         var segments: [(textSize: NSSize, text: String)] = []
 
         for (i, p) in providers.enumerated() {
-            let text = "\(p.percent)%"
+            let text = p.percent
             let size = (text as NSString).size(withAttributes: attrs)
             segments.append((size, text))
             totalWidth += iconSize + spacing + size.width

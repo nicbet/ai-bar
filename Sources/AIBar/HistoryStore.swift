@@ -97,8 +97,9 @@ final class HistoryStore: @unchecked Sendable {
     }
 
     func record(service: String, windowType: String, result: UsageAPIResult) {
+        guard let utilization = result.utilization else { return }
         record(service: service, windowType: windowType,
-               utilization: result.utilization, resetsAt: result.resetsAt,
+               utilization: utilization, resetsAt: result.resetsAt,
                windowDuration: result.windowDuration)
     }
 

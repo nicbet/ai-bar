@@ -204,22 +204,31 @@ final class CostEstimator: @unchecked Sendable {
         return fmt
     }
 
-    private static func parseTimestamp(_ ts: String) -> Date? {
+    // Formatters are expensive to create and ISO8601DateFormatter is thread-safe, so share them
+    nonisolated(unsafe) private static let fractionalFormatter: ISO8601DateFormatter = {
         let fmt = ISO8601DateFormatter()
         fmt.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        if let d = fmt.date(from: ts) { return d }
-        fmt.formatOptions = [.withInternetDateTime]
-        return fmt.date(from: ts)
+        return fmt
+    }()
+    nonisolated(unsafe) private static let plainFormatter = ISO8601DateFormatter()
+
+    private static func parseTimestamp(_ ts: String) -> Date? {
+        fractionalFormatter.date(from: ts) ?? plainFormatter.date(from: ts)
     }
 
     // MARK: - Tallies
 
-    private struct TokenTally {
+    struct TokenTally {
         var input: Int = 0
         var output: Int = 0
         var cacheWrite: Int = 0
         var cacheRead: Int = 0
         var cacheWrite1h: Int = 0
+
+        mutating func add(_ o: TokenTally) {
+            input += o.input; output += o.output; cacheWrite += o.cacheWrite
+            cacheRead += o.cacheRead; cacheWrite1h += o.cacheWrite1h
+        }
     }
 
     /// day -> model key -> tally
@@ -267,41 +276,107 @@ final class CostEstimator: @unchecked Sendable {
         return tallies
     }
 
+    struct ClaudeMessage {
+        let id: String
+        let date: Date
+        /// Model id, with the fast-mode suffix for fast requests
+        let key: String
+        let tally: TokenTally
+    }
+
+    /// Assistant messages with token usage in transcript bytes (whole JSONL lines).
+    /// Works on raw bytes: lines are found with memchr and filtered with memmem, and only
+    /// lines mentioning "usage" are decoded, which is ~100x faster than splitting a String.
+    static func claudeMessages(in data: Data) -> [ClaudeMessage] {
+        let needle = Array("\"usage\"".utf8)
+        var found: [ClaudeMessage] = []
+        data.withUnsafeBytes { (buf: UnsafeRawBufferPointer) in
+            guard let base = buf.baseAddress else { return }
+            let end = base + buf.count
+            var lineStart = base
+            while lineStart < end {
+                let remaining = end - lineStart
+                let nl = memchr(lineStart, Int32(UInt8(ascii: "\n")), remaining)
+                let lineEnd = nl.map { UnsafeRawPointer($0) } ?? end
+                let length = lineEnd - lineStart
+                if length > 0, memmem(lineStart, length, needle, needle.count) != nil {
+                    let line = Data(bytesNoCopy: UnsafeMutableRawPointer(mutating: lineStart),
+                                    count: length, deallocator: .none)
+                    if let m = parseClaudeLine(line) { found.append(m) }
+                }
+                lineStart = lineEnd + 1
+            }
+        }
+        return found
+    }
+
+    /// The fields of a transcript line that cost needs; everything else is skipped.
+    private struct TranscriptLine: Decodable {
+        struct Message: Decodable {
+            struct Usage: Decodable {
+                struct CacheCreation: Decodable { let ephemeral_1h_input_tokens: Int? }
+                let input_tokens: Int?
+                let output_tokens: Int?
+                let cache_read_input_tokens: Int?
+                let cache_creation_input_tokens: Int?
+                let cache_creation: CacheCreation?
+                let speed: String?
+            }
+            let id: String?
+            let model: String?
+            let usage: Usage?
+        }
+        let timestamp: String?
+        let message: Message?
+    }
+
+    /// One assistant message with token usage from a Claude Code transcript line, or nil.
+    static func parseClaudeLine(_ data: Data) -> ClaudeMessage? {
+        guard let line = try? JSONDecoder().decode(TranscriptLine.self, from: data),
+              let ts = line.timestamp, let date = parseTimestamp(ts),
+              let msgId = line.message?.id, let model = line.message?.model,
+              let usage = line.message?.usage,
+              model != "<synthetic>" else { return nil }
+
+        let key = usage.speed == "fast" ? model + fastSuffix : model
+        var t = TokenTally()
+        t.input = usage.input_tokens ?? 0
+        t.output = usage.output_tokens ?? 0
+        t.cacheRead = usage.cache_read_input_tokens ?? 0
+        let cacheWriteTotal = usage.cache_creation_input_tokens ?? 0
+        if let oneHour = usage.cache_creation?.ephemeral_1h_input_tokens {
+            t.cacheWrite1h = oneHour
+            t.cacheWrite = max(cacheWriteTotal - oneHour, 0)
+        } else {
+            t.cacheWrite = cacheWriteTotal
+        }
+        return ClaudeMessage(id: msgId, date: date, key: key, tally: t)
+    }
+
+    /// API-equivalent cost of one Claude message.
+    static func claudeCost(_ m: ClaudeMessage) -> Double {
+        let fast = m.key.hasSuffix(fastSuffix)
+        let model = fast ? String(m.key.dropLast(fastSuffix.count)) : m.key
+        let p = pricing(for: model, in: claudePricing, fallback: defaultClaude)
+        return p.cost(input: m.tally.input, output: m.tally.output,
+                      cacheWrite: m.tally.cacheWrite, cacheRead: m.tally.cacheRead,
+                      cacheWrite1h: m.tally.cacheWrite1h, fast: fast)
+    }
+
     private func scanClaudeFile(_ url: URL, since start: Date,
                                 tallies: inout DayTallies,
                                 seenIds: inout Set<String>) {
-        guard let content = try? String(contentsOf: url, encoding: .utf8) else { return }
+        guard let content = try? Data(contentsOf: url, options: .mappedIfSafe) else { return }
 
-        for line in content.split(separator: "\n", omittingEmptySubsequences: true) {
-            guard line.contains("\"usage\""), line.contains("\"message\"") else { continue }
-            guard let data = line.data(using: .utf8),
-                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { continue }
+        for m in Self.claudeMessages(in: content) {
+            guard m.date >= start else { continue }
+            guard !seenIds.contains(m.id) else { continue }
+            seenIds.insert(m.id)
 
-            guard let ts = json["timestamp"] as? String,
-                  let date = Self.parseTimestamp(ts), date >= start else { continue }
-            guard let msg = json["message"] as? [String: Any],
-                  let msgId = msg["id"] as? String,
-                  let model = msg["model"] as? String,
-                  let usage = msg["usage"] as? [String: Any] else { continue }
-            guard model != "<synthetic>" else { continue }
-            guard !seenIds.contains(msgId) else { continue }
-            seenIds.insert(msgId)
-
-            let day = Self.dayKey(date)
-            let key = (usage["speed"] as? String) == "fast" ? model + Self.fastSuffix : model
-            var t = tallies[day, default: [:]][key, default: TokenTally()]
-            t.input += usage["input_tokens"] as? Int ?? 0
-            t.output += usage["output_tokens"] as? Int ?? 0
-            t.cacheRead += usage["cache_read_input_tokens"] as? Int ?? 0
-            let cacheWriteTotal = usage["cache_creation_input_tokens"] as? Int ?? 0
-            if let breakdown = usage["cache_creation"] as? [String: Any] {
-                let oneHour = breakdown["ephemeral_1h_input_tokens"] as? Int ?? 0
-                t.cacheWrite1h += oneHour
-                t.cacheWrite += max(cacheWriteTotal - oneHour, 0)
-            } else {
-                t.cacheWrite += cacheWriteTotal
-            }
-            tallies[day, default: [:]][key] = t
+            let day = Self.dayKey(m.date)
+            var t = tallies[day, default: [:]][m.key, default: TokenTally()]
+            t.add(m.tally)
+            tallies[day, default: [:]][m.key] = t
         }
     }
 

@@ -53,9 +53,12 @@ enum Snapshot {
 
     static func sampleManager() -> UsageManager {
         let now = Date()
-        let claude = ServiceUsage(utilization: 0.31, resetsAt: now.addingTimeInterval(2 * 3600 + 46 * 60),
-                                  windowDuration: 5 * 3600, weeklyUtilization: 0.22,
-                                  weeklyResetsAt: now.addingTimeInterval(4 * 86400 + 6 * 3600), lastUpdated: now)
+        // Claude without a real 5-hour limit: weekly ring, simulated 5-hour window on the bar
+        let claude = ServiceUsage(weeklyUtilization: 0.38,
+                                  weeklyResetsAt: now.addingTimeInterval(4 * 86400 + 6 * 3600), lastUpdated: now,
+                                  weeklyWindowDuration: 7 * 86400, simulating: true,
+                                  simulated: SimulatedWindow(start: now.addingTimeInterval(-(2 * 3600 + 10 * 60)),
+                                                             baseline: 0.35, budget: 0.075))
         let codex = ServiceUsage(utilization: 0.63, resetsAt: now.addingTimeInterval(1 * 3600 + 12 * 60),
                                  windowDuration: 5 * 3600, weeklyUtilization: 0.41,
                                  weeklyResetsAt: now.addingTimeInterval(2 * 86400 + 20 * 3600), lastUpdated: now)
@@ -127,8 +130,8 @@ private struct PopoverScene: View {
 
     private var label: NSImage {
         MenuBarRenderer.render(
-            providers: [ProviderLabel(iconPath: BrandIcons.claudePath, percent: manager.claude.percentInt),
-                        ProviderLabel(iconPath: BrandIcons.codexPath, percent: manager.codex.percentInt)],
+            providers: [ProviderLabel(iconPath: BrandIcons.claudePath, percent: manager.claude.gauges(primary: manager.primaryIndicator).main?.percentText ?? "0%"),
+                        ProviderLabel(iconPath: BrandIcons.codexPath, percent: manager.codex.gauges(primary: manager.primaryIndicator).main?.percentText ?? "0%")],
             costLabel: String(format: "%.2f", manager.dailyCost.totalCost))
     }
 

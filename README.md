@@ -18,9 +18,10 @@ A macOS menu bar app that tracks Claude and Codex (ChatGPT) token usage in real 
 
 ## Features
 
-- **Ring progress bars** showing 5-hour session usage for both Claude and Codex
-- **Pacing indicator** — a tick mark on each ring showing where usage _should_ be for even consumption across the window
-- **Weekly limits** — horizontal progress bar below each ring showing 7-day utilization
+- **Ring progress bars** showing 5-hour session or weekly usage for Claude and Codex (Settings → Main ring: Auto, 5-hour or Weekly; Auto shows weekly when a provider has no 5-hour limit)
+- **Pacing indicator** — a tick mark on the ring and on the bar showing where usage _should_ be for even consumption across the window
+- **Second window bar** — horizontal progress bar below each ring for whichever window the ring doesn't show
+- **Simulated 5-hour windows** (on by default, Settings → Pacing) — for plans without a 5-hour limit, AI Bar keeps its own 5-hour window and paces it against your weekly limit (see [Pacing](#pacing))
 - **Auto-detection** — discovers which providers are installed, shows setup instructions for missing ones
 - **Settings window** — enable/disable providers, adjust refresh interval (1m–15m)
 - **Detail view** — click a ring to open a window with usage history charts (24h/7d/30d)
@@ -84,7 +85,7 @@ The app isn't notarized. A copy you build yourself opens normally. If you copy i
 | Claude  | `GET https://api.anthropic.com/api/oauth/usage`  | OAuth token from macOS Keychain (`Claude Code-credentials`) |
 | Codex   | `GET https://chatgpt.com/backend-api/wham/usage` | Access token from `~/.codex/auth.json`                      |
 
-Both APIs return utilization as a percentage and a reset timestamp. No token counting or file parsing needed.
+Both APIs return utilization as a whole percentage and a reset timestamp, for a 5-hour window and a weekly one. Either can be missing: Claude plans without a 5-hour limit report only the weekly window.
 
 ### Cost Estimates
 
@@ -92,13 +93,23 @@ Cost estimates are computed locally from session transcripts (`~/.claude/project
 
 ### Pacing
 
-The tick mark on each ring shows where you'd be if you consumed your budget evenly across the window. If the filled arc is ahead of the tick, you're burning faster than sustainable pace.
+The tick mark on the ring and on the bar shows where you'd be if you consumed your budget evenly across the window. If the fill is ahead of the tick, you're burning faster than sustainable pace.
+
+**Main ring.** Settings → Display → Main ring picks what the ring and the menu bar show: the 5-hour window, the weekly one, or Auto (5-hour when the provider reports a real one, otherwise weekly). The bar under the ring shows the other window.
+
+**Simulated 5-hour windows.** Without a 5-hour limit there is nothing pacing a day's work, so AI Bar keeps its own window:
+
+- **Opening.** A window opens on your first usage after the previous one ended: when a Claude Code (or Codex) transcript changes, or when the weekly percentage goes up (usage outside the CLI, such as claude.ai). It dates from the previous poll, never more than 15 minutes back.
+- **Budget.** Each window may use the weekly headroom left divided by the windows left before the weekly reset, at 1–4 windows a day (Settings → Pacing, default 2). Changing the setting re-budgets the open window. Using less early in the week leaves more for later windows.
+- **Progress.** The API reports weekly usage in whole percents, a large step on big plans. Between steps AI Bar estimates from local transcripts: it learns the API-equivalent cost of one weekly percent from this week's usage (kept for the start of the next week) and divides the cost since the window opened by it. The estimate is clamped to within a point of the whole-percent readings, so it can't drift. Estimated values under 10% show a decimal.
+
+The window is labelled "5h sim" and is saved across restarts. If the provider reports a real 5-hour window again, AI Bar uses that instead. Transcripts are read incrementally: the first read after launch covers the current week (a couple of seconds), later ones only what was appended.
 
 ### Data Storage
 
 | File                          | Purpose                                                                                               |
 | ----------------------------- | ----------------------------------------------------------------------------------------------------- |
-| `~/.config/ai-bar/state.json` | Current usage state (persisted across restarts)                                                       |
+| `~/.config/ai-bar/state.json` | Current usage state, settings, the simulated window and the learned cost per weekly percent            |
 | `~/.config/ai-bar/history.db` | SQLite database of usage snapshots (auto-pruned at 90 days) and daily cost estimates (kept ~400 days) |
 | `~/.config/ai-bar/debug.log`  | Debug log for API errors                                                                              |
 
@@ -123,7 +134,7 @@ You don't have to take this on trust. All credential handling is in [`Sources/AI
 
 ## Usage
 
-The menu bar shows icons and percentages for each active provider. Click to open the popover with ring displays, pacing indicators, and weekly limits. Click a ring to open a detail window with usage history charts. With estimated cost enabled, click the cost row to open the spending window; click a bar in the chart (or use the arrows) to see that day's receipt.
+The menu bar shows icons and percentages for each active provider (the main ring's window). Click to open the popover with ring displays, pacing indicators, and the other window's bar. Click a ring to open a detail window with usage history charts. With estimated cost enabled, click the cost row to open the spending window; click a bar in the chart (or use the arrows) to see that day's receipt.
 
 ## License
 

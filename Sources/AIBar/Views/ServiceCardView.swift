@@ -4,6 +4,7 @@ struct ServiceCardView: View {
     let name: String
     let iconPath: String
     let usage: ServiceUsage
+    var primary: PrimaryIndicator = .auto
     let colors: (Color, Color)
 
     @Environment(\.openWindow) private var openWindow
@@ -13,13 +14,15 @@ struct ServiceCardView: View {
             NSApp.activate()
             openWindow(id: "service-detail", value: name.lowercased())
         } label: {
+            let gauges = usage.gauges(primary: primary)
             VStack(spacing: 8) {
                 RingProgressView(
-                    progress: usage.percentage,
+                    progress: max(gauges.main?.utilization ?? 0, 0),
                     colors: colors,
                     size: 96,
                     lineWidth: 9,
-                    pacePosition: usage.elapsedFraction
+                    pacePosition: gauges.main?.elapsedFraction,
+                    label: gauges.main?.percentText
                 )
 
                 HStack(spacing: 5) {
@@ -40,19 +43,15 @@ struct ServiceCardView: View {
                             .lineLimit(1)
                     }
                     .foregroundStyle(.orange)
-                } else if !usage.formattedUsage.isEmpty {
-                    Text(usage.formattedUsage)
+                } else {
+                    Text(gauges.main?.statusText ?? "not connected")
                         .font(.system(.caption2, design: .rounded))
                         .foregroundStyle(.tertiary)
                 }
 
-                if usage.weeklyUtilization != nil {
-                    WeeklyBarView(
-                        progress: usage.weeklyPercentage,
-                        color: colors.0,
-                        resetText: usage.formattedWeeklyReset
-                    )
-                    .padding(.horizontal, 4)
+                if let secondary = gauges.secondary {
+                    GaugeBarView(gauge: secondary, color: colors.0)
+                        .padding(.horizontal, 4)
                 }
             }
             .frame(maxWidth: .infinity)

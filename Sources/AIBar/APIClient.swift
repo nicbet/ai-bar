@@ -15,11 +15,13 @@ func logToFile(_ msg: String) {
 }
 
 struct UsageAPIResult {
-    var utilization: Double
+    /// Short (5-hour) window. Nil when the provider doesn't report one, e.g. plans without a 5-hour limit.
+    var utilization: Double?
     var resetsAt: Date?
     var windowDuration: TimeInterval
     var weeklyUtilization: Double?
     var weeklyResetsAt: Date?
+    var weeklyWindowDuration: TimeInterval = 604800
 }
 
 final class APIClient: @unchecked Sendable {
@@ -33,6 +35,7 @@ final class APIClient: @unchecked Sendable {
 
     private var claudeToken: String?
     private var claudeTokenAttempted = false
+    private var loggedMissingSession = false
 
     // MARK: - Claude
 
@@ -142,10 +145,13 @@ final class APIClient: @unchecked Sendable {
             return fmt.date(from: s)
         }
 
+        func number(_ v: Any?) -> Double? {
+            v as? Double ?? (v as? Int).map(Double.init)
+        }
+
         func extractWindow(_ json: [String: Any], keys: [String]) -> (Double, Date?)? {
             for key in keys {
-                if let window = json[key] as? [String: Any] {
-                    let util = window["utilization"] as? Double ?? 0
+                if let window = json[key] as? [String: Any], let util = number(window["utilization"]) {
                     let resetStr = (window["resets_at"] ?? window["resetsAt"]) as? String
                     return (util / 100.0, resetStr.flatMap(parseDate))
                 }
@@ -153,24 +159,35 @@ final class APIClient: @unchecked Sendable {
             return nil
         }
 
-        if let (util, reset) = extractWindow(json, keys: ["five_hour", "fiveHour"]) {
-            let weekly = extractWindow(json, keys: ["seven_day", "sevenDay"])
-            return UsageAPIResult(
-                utilization: util, resetsAt: reset, windowDuration: 18000,
-                weeklyUtilization: weekly?.0, weeklyResetsAt: weekly?.1
-            )
+        // Either window can be missing or null: plans without a 5-hour limit report only the weekly one.
+        let session = extractWindow(json, keys: ["five_hour", "fiveHour"])
+        var weekly = extractWindow(json, keys: ["seven_day", "sevenDay"])
+
+        if session == nil && weekly == nil,
+           let limits = json["limits"] as? [[String: Any]], !limits.isEmpty {
+            // Older/alternate shape. Only trust an entry as weekly if it says so or resets more than a day out;
+            // never present it as the 5-hour window.
+            for entry in limits {
+                guard let pct = number(entry["percent"] ?? entry["utilization"]) else { continue }
+                let reset = ((entry["resets_at"] ?? entry["resetsAt"]) as? String).flatMap(parseDate)
+                let name = [entry["window"], entry["type"], entry["name"], entry["id"]]
+                    .compactMap { $0 as? String }.joined(separator: " ").lowercased()
+                let looksWeekly = name.contains("week") || name.contains("seven")
+                    || (reset.map { $0.timeIntervalSinceNow > 86400 } ?? false)
+                if looksWeekly { weekly = (pct / 100.0, reset); break }
+            }
         }
 
-        if let limits = json["limits"] as? [[String: Any]], let first = limits.first {
-            let pct = first["percent"] as? Double ?? 0
-            let resetStr = (first["resets_at"] ?? first["resetsAt"]) as? String
-            return UsageAPIResult(
-                utilization: pct / 100.0, resetsAt: resetStr.flatMap(parseDate),
-                windowDuration: 18000
-            )
+        if session == nil && !loggedMissingSession {
+            loggedMissingSession = true
+            logToFile("Claude: no five_hour window; top-level keys: \(json.keys.sorted().joined(separator: ", "))")
         }
 
-        throw APIError.parseFailed
+        guard session != nil || weekly != nil else { throw APIError.parseFailed }
+        return UsageAPIResult(
+            utilization: session?.0, resetsAt: session?.1, windowDuration: 18000,
+            weeklyUtilization: weekly?.0, weeklyResetsAt: weekly?.1
+        )
     }
 
     // MARK: - Codex
@@ -220,28 +237,33 @@ final class APIClient: @unchecked Sendable {
             dict[key] as? Double ?? (dict[key] as? Int).map(Double.init)
         }
 
-        guard let rateLimit = json["rate_limit"] as? [String: Any],
-              let primary = rateLimit["primary_window"] as? [String: Any] else {
+        guard let rateLimit = json["rate_limit"] as? [String: Any] else {
             throw APIError.parseFailed
         }
 
-        let pct = numVal(primary, "used_percent") ?? 0
-        let resetAt = numVal(primary, "reset_at")
-        let windowDuration = numVal(primary, "limit_window_seconds") ?? 18000
-
-        var weeklyUtil: Double?
-        var weeklyReset: Date?
-        if let secondary = rateLimit["secondary_window"] as? [String: Any] {
-            weeklyUtil = numVal(secondary, "used_percent").map { $0 / 100.0 }
-            weeklyReset = numVal(secondary, "reset_at").map { Date(timeIntervalSince1970: $0) }
+        typealias Window = (util: Double, reset: Date?, seconds: TimeInterval?)
+        func window(_ key: String) -> Window? {
+            guard let w = rateLimit[key] as? [String: Any], let pct = numVal(w, "used_percent") else { return nil }
+            return (pct / 100.0, numVal(w, "reset_at").map { Date(timeIntervalSince1970: $0) },
+                    numVal(w, "limit_window_seconds"))
         }
 
+        var session = window("primary_window")
+        var weekly = window("secondary_window")
+        // If the only window reported is a long one, it's the weekly limit, not a session.
+        if weekly == nil, let s = session, let secs = s.seconds, secs > 86400 {
+            weekly = s
+            session = nil
+        }
+        guard session != nil || weekly != nil else { throw APIError.parseFailed }
+
         return UsageAPIResult(
-            utilization: pct / 100.0,
-            resetsAt: resetAt.map { Date(timeIntervalSince1970: $0) },
-            windowDuration: windowDuration,
-            weeklyUtilization: weeklyUtil,
-            weeklyResetsAt: weeklyReset
+            utilization: session?.util,
+            resetsAt: session?.reset,
+            windowDuration: session?.seconds ?? 18000,
+            weeklyUtilization: weekly?.util,
+            weeklyResetsAt: weekly?.reset,
+            weeklyWindowDuration: weekly?.seconds ?? 604800
         )
     }
 

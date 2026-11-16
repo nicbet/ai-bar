@@ -26,6 +26,9 @@ struct PopoverView: View {
             Text("AI Usage")
                 .font(.system(.headline, design: .rounded))
             Spacer()
+            Text("v\(AppInfo.version)")
+                .font(.system(.caption2, design: .rounded))
+                .foregroundStyle(.tertiary)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
@@ -46,6 +49,7 @@ struct PopoverView: View {
                 name: "Claude",
                 iconPath: BrandIcons.claudePath,
                 usage: manager.claude,
+                primary: manager.primaryIndicator,
                 colors: (Color.claudeOrange, Color.claudeBrown)
             )
         } else if !manager.claudeAvailable {
@@ -65,6 +69,7 @@ struct PopoverView: View {
                 name: "Codex",
                 iconPath: BrandIcons.codexPath,
                 usage: manager.codex,
+                primary: manager.primaryIndicator,
                 colors: (Color.codexBlue, Color.codexBlueDark)
             )
         } else if !manager.codexAvailable {
